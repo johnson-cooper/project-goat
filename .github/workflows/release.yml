@@ -1,0 +1,191 @@
+# Builds goat-client-rl (the primary client, raylib-based) + goat-sim (the
+# headless duel engine both clients depend on as a subprocess) for Windows,
+# Linux, and macOS, packages each with every data/asset file the running
+# game actually reads via relative paths at runtime — not just the binaries
+# — and publishes all three as a GitHub Release whenever a `v*` tag is
+# pushed. See docs/CROSS_PLATFORM_CLIENT.md for background on the client
+# itself.
+#
+# Can also be run manually (Actions tab -> this workflow -> Run workflow)
+# without a tag, to test the build matrix alone — the release job only runs
+# for an actual tag push (see its own `if:` below), so a manual run never
+# publishes anything.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset_name: windows-x64
+          - os: ubuntu-latest
+            asset_name: linux-x64
+          - os: macos-latest
+            asset_name: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # A genuine MinGW-w64 toolchain, not the Cygwin-hosted one some
+      # Windows dev setups default to — raylib's GLFW backend gates its real
+      # Win32 implementation behind _WIN32 specifically, which a
+      # Cygwin-hosted GCC (only defines __CYGWIN__) never triggers, and
+      # everything compiles as empty stubs. See docs/CROSS_PLATFORM_CLIENT.md
+      # for the long version of this gotcha.
+      - name: Set up MinGW-w64 toolchain (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-sqlite3
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build libsqlite3-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libgl1-mesa-dev libglu1-mesa-dev libasound2-dev \
+            libwayland-dev libxkbcommon-dev
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
+      # Fetches external/ygopro-core (the duel engine source, compiled
+      # directly into both binaries) and external/raylib — neither is
+      # tracked in git. pwsh is preinstalled on all three GitHub-hosted
+      # runner images, so this one script covers every platform.
+      - name: Fetch pinned dependencies
+        shell: pwsh
+        run: ./scripts/update-dependencies.ps1
+
+      - name: Configure and build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc
+          cmake --build build --target goat-client-rl goat-sim -j4
+
+      - name: Configure and build (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target goat-client-rl goat-sim -j4
+
+      # goat-sim is a headless CLI program, so it's straightforward to
+      # exercise directly in CI unlike goat-client-rl (a windowed raylib
+      # app — meaningfully testing that would need a virtual display on
+      # every platform, which isn't worth the flakiness risk here). This at
+      # least catches a build that compiles but can't actually run a duel.
+      #
+      # Runs through the msys2 shell on Windows specifically (not plain
+      # bash) because that's the one with /mingw64/bin already on PATH —
+      # goat-sim.exe is dynamically linked against the MinGW runtime DLLs,
+      # which aren't next to it yet at this point (that happens in the
+      # packaging step below); running it from a shell that can already
+      # resolve them avoids a spurious "libsqlite3-0.dll not found" failure
+      # that would have nothing to do with whether the build is actually
+      # sound.
+      - name: Smoke-test the engine (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: ./build/goat-sim.exe duel decks/vanilla-a.ydk decks/vanilla-b.ydk --seed 12345 --max-turns 100 --quiet
+
+      - name: Smoke-test the engine (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./build/goat-sim duel decks/vanilla-a.ydk decks/vanilla-b.ydk --seed 12345 --max-turns 100 --quiet
+
+      # Everything below is read at runtime via a path relative to wherever
+      # the client/engine is launched from (verified directly against every
+      # hardcoded "external/..."/"data/..."/"decks/..." path string in
+      # src/client_rl/main.cpp and src/main.cpp, not just inferred).
+      # Deliberately NOT included: external/ygopro-core (compiled in, never
+      # read as loose files at runtime), external/windbot (unused reference
+      # code), saves/ and sessions/ (runtime-generated, player-specific — a
+      # release should start clean).
+      - name: Assemble release package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="goat-project-${{ matrix.asset_name }}"
+          rm -rf "$pkg"
+          mkdir -p "$pkg"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp build/goat-client-rl.exe build/goat-sim.exe "$pkg/"
+            for dll in libgcc_s_seh-1.dll libwinpthread-1.dll libsqlite3-0.dll libstdc++-6.dll; do
+              cp "/c/msys64/mingw64/bin/$dll" "$pkg/"
+            done
+            cp Start-GOAT-Simulator.cmd "$pkg/"
+          else
+            cp build/goat-client-rl build/goat-sim "$pkg/"
+            chmod +x "$pkg/goat-client-rl" "$pkg/goat-sim"
+          fi
+
+          mkdir -p "$pkg/data" "$pkg/decks" \
+                   "$pkg/external/BabelCDB" "$pkg/external/LFLists" "$pkg/external/CardScripts" \
+                   "$pkg/external/card_images" "$pkg/external/packart" "$pkg/external/extra"
+          cp -r data/. "$pkg/data/"
+          cp -r decks/. "$pkg/decks/"
+          cp -r external/CardScripts/. "$pkg/external/CardScripts/"
+          cp external/BabelCDB/cards.cdb external/BabelCDB/goat-entries.cdb "$pkg/external/BabelCDB/"
+          cp external/LFLists/GOAT.lflist.conf "$pkg/external/LFLists/"
+          cp -r external/card_images/. "$pkg/external/card_images/"
+          cp -r external/packart/. "$pkg/external/packart/"
+          cp -r external/extra/. "$pkg/external/extra/"
+          cp README.md THIRD_PARTY_NOTICES.md "$pkg/"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$pkg.zip" "$pkg" >/dev/null
+          else
+            zip -rq "$pkg.zip" "$pkg"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: goat-project-${{ matrix.asset_name }}
+          path: goat-project-${{ matrix.asset_name }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          files=$(find artifacts -name '*.zip')
+          gh release create "${{ github.ref_name }}" $files \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes

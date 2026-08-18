@@ -47,6 +47,29 @@ if(WIN32)
   target_link_libraries(goat-client PRIVATE ole32 windowscodecs gdi32 sqlite3)
 endif()
 
+# Cross-platform client (Windows/macOS/Linux), built on raylib instead of
+# Win32 GDI/WIC. Vendored like every other external/ dependency — see
+# scripts/update-dependencies.ps1 — rather than fetched separately via
+# FetchContent, so there's one consistent way this project acquires
+# third-party source instead of two.
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/external/raylib/CMakeLists.txt)
+  set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(BUILD_GAMES OFF CACHE BOOL "" FORCE)
+  add_subdirectory(external/raylib)
+  # SUPPORT_FILEFORMAT_JPG is disabled in raylib's default config.h (only PNG
+  # is on by default) — this project's card/pack art is all .jpg, so without
+  # this every LoadImage() on them silently fails and nothing but the title
+  # screen's .png background ever renders. Matches scripts/build-client-rl.sh's
+  # CUSTOM_CFLAGS override for the same reason, applied here at the CMake
+  # target level since that script's ad hoc Makefile invocation isn't used
+  # when building through CMake.
+  target_compile_definitions(raylib PRIVATE SUPPORT_FILEFORMAT_JPG=1)
+
+  add_executable(goat-client-rl src/client_rl/main.cpp src/client_rl/ProcessBridge.cpp src/game/Progression.cpp src/game/Catalog.cpp src/game/DeckBuilder.cpp src/cards/CardDatabase.cpp src/deck/Banlist.cpp)
+  target_include_directories(goat-client-rl PRIVATE src)
+  target_link_libraries(goat-client-rl PRIVATE raylib sqlite3)
+endif()
+
 enable_testing()
 if(WIN32)
   add_test(NAME player_ipc COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/scripts/test-player-ipc.ps1)

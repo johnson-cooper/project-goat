@@ -26,6 +26,7 @@ node_modules/
 # `cmake --build` will succeed. external/windbot is unused reference code.
 /external/ygopro-core/
 /external/windbot/
+/external/raylib/
 
 # CardScripts upstream ships ~22.7k files (one per printed card across every
 # format ever supported); this project only ever loads a script for a card
