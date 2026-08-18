@@ -40,4 +40,18 @@ foreach ($dependency in $dependencies) {
     git -C $target fetch --tags origin
     $ref = if ($AllowUnpinned) { 'origin/master' } else { $dependency.Commit }
     git -C $target checkout --detach $ref
+    # ygopro-core vendors lua/src as a git submodule (see its .gitmodules) -
+    # a plain "git clone" leaves that directory completely empty, since
+    # submodule content is never fetched implicitly. That's invisible on any
+    # machine that already has a properly-initialized checkout sitting
+    # around from before (every local dev session so far), but on a
+    # genuinely fresh clone (any CI run) it leaves
+    # external/ygopro-core/lua/src with zero files, which CMakeLists.txt's
+    # file(GLOB ... lua/src/*.c) then silently turns into "No SOURCES given
+    # to target: ygopro_lua" - a confusing error that looks nothing like a
+    # missing-submodule problem. Run unconditionally (a no-op on
+    # dependencies without submodules) rather than special-casing
+    # ygopro-core, since that's one less thing to keep in sync if another
+    # dependency ever gains a submodule of its own.
+    git -C $target submodule update --init --recursive
 }
