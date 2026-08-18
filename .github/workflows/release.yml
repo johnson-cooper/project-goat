@@ -130,14 +130,17 @@ jobs:
           set -euo pipefail
           pkg="goat-project-${{ matrix.asset_name }}"
           rm -rf "$pkg"
-          mkdir -p "$pkg"
+          mkdir -p "$pkg/build"
 
+          # Both binaries go in build/, not the package root: Start-GOAT-Simulator.cmd
+          # launches "%~dp0build\goat-client-rl.exe", and goat-client-rl itself spawns
+          # the engine from root/"build"/"goat-sim" (see src/client_rl/main.cpp).
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp build/goat-client-rl.exe build/goat-sim.exe "$pkg/"
+            cp build/goat-client-rl.exe build/goat-sim.exe "$pkg/build/"
             cp Start-GOAT-Simulator.cmd "$pkg/"
           else
-            cp build/goat-client-rl build/goat-sim "$pkg/"
-            chmod +x "$pkg/goat-client-rl" "$pkg/goat-sim"
+            cp build/goat-client-rl build/goat-sim "$pkg/build/"
+            chmod +x "$pkg/build/goat-client-rl" "$pkg/build/goat-sim"
           fi
 
           mkdir -p "$pkg/data" "$pkg/decks" \
@@ -170,7 +173,7 @@ jobs:
           set -euo pipefail
           pkg="goat-project-${{ matrix.asset_name }}"
           for dll in libgcc_s_seh-1.dll libwinpthread-1.dll libsqlite3-0.dll libstdc++-6.dll; do
-            cp "/mingw64/bin/$dll" "$pkg/"
+            cp "/mingw64/bin/$dll" "$pkg/build/"
           done
 
       - name: Create release archive
