@@ -134,9 +134,6 @@ jobs:
 
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp build/goat-client-rl.exe build/goat-sim.exe "$pkg/"
-            for dll in libgcc_s_seh-1.dll libwinpthread-1.dll libsqlite3-0.dll libstdc++-6.dll; do
-              cp "/c/msys64/mingw64/bin/$dll" "$pkg/"
-            done
             cp Start-GOAT-Simulator.cmd "$pkg/"
           else
             cp build/goat-client-rl build/goat-sim "$pkg/"
@@ -156,6 +153,31 @@ jobs:
           cp -r external/extra/. "$pkg/external/extra/"
           cp README.md THIRD_PARTY_NOTICES.md "$pkg/"
 
+      # goat-client-rl.exe/goat-sim.exe are dynamically linked against the
+      # MinGW runtime, so the release needs these DLLs sitting next to them.
+      # This runs through the msys2 shell specifically (not plain bash, like
+      # the step above) because msys2/setup-msys2 does NOT install to a fixed
+      # `C:\msys64` — on GitHub-hosted runners it installs under
+      # `${{ runner.temp }}`, a path that varies by runner and isn't worth
+      # hardcoding or parsing out of an action output. The msys2 shell's own
+      # `/mingw64/bin` always resolves correctly regardless of where the real
+      # Windows-side install root ended up, the same reason the smoke-test
+      # step above also runs through it rather than plain bash.
+      - name: Copy MinGW runtime DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          pkg="goat-project-${{ matrix.asset_name }}"
+          for dll in libgcc_s_seh-1.dll libwinpthread-1.dll libsqlite3-0.dll libstdc++-6.dll; do
+            cp "/mingw64/bin/$dll" "$pkg/"
+          done
+
+      - name: Create release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="goat-project-${{ matrix.asset_name }}"
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a "$pkg.zip" "$pkg" >/dev/null
           else
