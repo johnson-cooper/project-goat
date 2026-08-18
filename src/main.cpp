@@ -146,6 +146,27 @@ public:
     if(choices.empty()) return raw_response(-1);
     return choose_menu((count>0 ? "You may respond with a chain link" : "Confirm") + context_suffix(chain_context_code), choices);
    }
+   // field::process(Processors::SelectChain&) in playerop.cpp only accepts a
+   // -1 decline when `forced` is false (`if(!forced && returns.at<int32_t>(0)
+   // == -1) return TRUE;`) — when forced, -1 fails that check *and* the
+   // bounds check right after it (-1 is never a valid index), so the engine
+   // answers with MSG_RETRY and asks the exact same question again. This
+   // used to always decline regardless of `forced`, which meant any duel
+   // where the CPU (or, before human_player_ was set, either side) hit a
+   // forced chain link — a mandatory trigger effect, not uncommon in this
+   // card pool — got stuck submitting the same rejected response forever:
+   // an invisible infinite MSG_RETRY loop (this game loop's own message log
+   // only names a handful of message kinds, so this produced no visible
+   // output at all) that silently burned through the entire 50000-call
+   // budget before dying with "processor call limit reached" — a duel
+   // ending with no warning, often mid-battle, since forced chain windows
+   // are common right after an attack or during the opponent's turn.
+   // Reproduced directly: stress-testing every pair of this project's own
+   // shipped GOAT tournament decks (decks/starter/*.ydk) across several
+   // seeds hit this exact failure on 225 of 396 matchups (57%) before this
+   // fix, and a debug build that logged every message kind confirmed the
+   // pending state right before each hang was always MSG_SELECT_CHAIN.
+   if(forced && count > 0) return raw_response(0);
    return raw_response(-1); // CPU declines optional chain responses (baseline strategy unchanged).
   }
   if(kind == MSG_SELECT_YESNO) {
@@ -513,6 +534,22 @@ static void track_board_message(const uint8_t* data, size_t length, BoardState& 
   read<uint32_t>(p,end); const auto player=read<uint8_t>(p,end); const auto location=read<uint8_t>(p,end); const auto sequence=read<uint8_t>(p,end); read<uint8_t>(p,end); const auto position=read<uint8_t>(p,end);
   if(player<2 && location==LOCATION_MZONE && sequence<5 && board.monsters[player][sequence].code) board.monsters[player][sequence].position=position;
   if(player<2 && location==LOCATION_SZONE && sequence<6 && board.spells[player][sequence].code) board.spells[player][sequence].position=position;
+  return;
+ }
+ if(kind == MSG_FLIPSUMMONING) {
+  // A facedown Defense Position monster manually turned face-up on your own
+  // turn (a Flip Summon) is a position-only change on a card that's already
+  // on the field, same as MSG_POS_CHANGE above — but field::process(...) in
+  // operations.cpp (the FlipSummon processor) reports it via this entirely
+  // different message instead of MSG_POS_CHANGE, since it's driven by
+  // is_can_be_flip_summoned rather than the manual attack<->defense toggle.
+  // Without a case here, board.monsters[][] kept the card's stale facedown
+  // position forever (nothing else in this switch ever touches it), so
+  // write_board_state's own facedown-hides-the-code check kept treating an
+  // opponent's already-revealed Flip Summoned monster as still hidden.
+  const auto code=read<uint32_t>(p,end); const auto loc=read_location(p,end);
+  if(loc.player<2 && loc.location==LOCATION_MZONE && loc.sequence<5 && board.monsters[loc.player][loc.sequence].code==code)
+   board.monsters[loc.player][loc.sequence].position=static_cast<uint8_t>(loc.position);
   return;
  }
  if(kind == MSG_CHAINING) {
