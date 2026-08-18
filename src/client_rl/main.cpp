@@ -1567,7 +1567,12 @@ std::string run_automatic_duel() {
     const auto result = goat::process::run_and_capture(executable.string(), args, root.string());
     if (!result.started) return "Could not start the Project Ignis duel process.";
     if (result.exit_code != 0) return "Automatic duel failed:\n" + result.output.substr(result.output.rfind('\n') + 1);
-    const auto winner = result.output.rfind("wins (reason");
+    // "wins (reason" for a real winner, "draw (reason" for ygopro-core's
+    // PLAYER_NONE case (see src/main.cpp's log_message) — a duel only ever
+    // produces one or the other, never both, so whichever is found (if any)
+    // is the final result line.
+    auto winner = result.output.rfind("wins (reason");
+    if (winner == std::string::npos) winner = result.output.rfind("draw (reason");
     if (winner == std::string::npos) return "Automatic duel finished without a final result message.";
     const auto line_start = result.output.rfind('\n', winner);
     const auto line_end = result.output.find('\n', winner);
@@ -1704,13 +1709,25 @@ void poll_player_duel(AppState& state) {
     if (fs::exists(result)) {
         std::ifstream input(result); std::string winner; std::getline(input, winner);
         const bool player_won = winner == "winner=0";
+        // ygopro-core's own PLAYER_NONE (see field::check_win_lose in
+        // processor.cpp, e.g. both players deck out on the same draw, or a
+        // simultaneous LP-to-zero neither side is immune to) writes MSG_WIN
+        // with a winner byte of 2, not 0 or 1 — a genuine draw, distinct from
+        // either player losing. Treating "not winner=0" as an automatic
+        // defeat (the naive reading of this file) silently told the player
+        // they lost a duel that was actually a draw; check for it explicitly.
+        const bool is_draw = winner == "winner=2";
         const auto& npc = state.catalog.npcs.at(state.selected_npc % state.catalog.npcs.size());
         if (state.duel_is_test_mode) {
-            state.status = player_won ? "Test duel complete \xE2\x80\x94 Victory! (no rewards, test mode)" : "Test duel complete \xE2\x80\x94 Defeat. (no penalty, test mode)";
+            state.status = player_won ? "Test duel complete \xE2\x80\x94 Victory! (no rewards, test mode)"
+                : is_draw ? "Test duel complete \xE2\x80\x94 Draw. (no rewards, test mode)"
+                : "Test duel complete \xE2\x80\x94 Defeat. (no penalty, test mode)";
         } else if (player_won) {
             state.progression.award_npc_victory(npc);
             goat::game::ProfileStore::save(state.progression.profile(), "saves/default.sav");
             state.status = "Victory! Earned " + std::to_string(npc.reward.credits) + " credits and a sealed pack.";
+        } else if (is_draw) {
+            state.status = "The duel ended in a draw. No rewards or penalty.";
         } else {
             state.status = "Defeat. Try a different line or strengthen your collection in the shop.";
         }

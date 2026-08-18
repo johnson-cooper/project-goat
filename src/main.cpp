@@ -433,7 +433,15 @@ static void log_message(const uint8_t* data,size_t length) {
  else if(kind==MSG_SUMMONED) std::cout << "A monster is summoned.\n";
  else if(kind==MSG_ATTACK) std::cout << "An attack is declared.\n";
  else if(kind==MSG_DAMAGE) { auto pl=read<uint8_t>(p,end); std::cout << "Player " << int(pl+1) << " takes " << read<int32_t>(p,end) << " damage\n"; }
- else if(kind==MSG_WIN) { auto pl=read<uint8_t>(p,end); auto reason=read<uint8_t>(p,end); std::cout << "Player " << int(pl+1) << " wins (reason " << int(reason) << ").\n"; }
+ else if(kind==MSG_WIN) {
+  auto pl=read<uint8_t>(p,end); auto reason=read<uint8_t>(p,end);
+  // pl==PLAYER_NONE (2) is a genuine draw (e.g. both players deck out on the
+  // same draw, or simultaneous LP-to-zero neither side is immune to) — not a
+  // third player. "Player 3 wins" would otherwise print here verbatim, and
+  // run_automatic_duel (src/client_rl/main.cpp) surfaces this line as-is.
+  if(pl==PLAYER_NONE) std::cout << "The duel is a draw (reason " << int(reason) << ").\n";
+  else std::cout << "Player " << int(pl+1) << " wins (reason " << int(reason) << ").\n";
+ }
 }
 
 struct BoardCard { uint32_t code{}; uint8_t position{}; };
