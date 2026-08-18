@@ -1,0 +1,48 @@
+# Build output (CMake + the ad hoc scripts/build-smoke.sh path)
+/build/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.log
+
+# Vestigial Node.js tooling from an earlier, abandoned web-based client
+# prototype — the shipped client is native Win32 C++/GDI (see README.md) and
+# has no Node/web runtime dependency, so this tree is dead weight.
+/client/
+node_modules/
+
+# Player-specific runtime state — generated on first run, never shipped
+/saves/
+/sessions/
+
+# Vendored dependencies pinned + fetched by scripts/update-dependencies.ps1
+# (each is a real upstream git repo at a pinned commit — reproducible from
+# that script, so there's no need to bury someone else's git history in this
+# repo). Run that script after cloning before building: it fetches
+# external/ygopro-core, the engine source compiled directly into
+# goat-sim/goat-client (see CMakeLists.txt), so a fresh clone needs it before
+# `cmake --build` will succeed. external/windbot is unused reference code.
+/external/ygopro-core/
+/external/windbot/
+
+# CardScripts upstream ships ~22.7k files (one per printed card across every
+# format ever supported); this project only ever loads a script for a card
+# that's actually resolvable through our GOAT banlist + local card database.
+# Everything is still fetchable via scripts/update-dependencies.ps1 if the
+# tracked subset ever needs to grow — see that subset staged with `git add
+# -f` (bypassing this ignore) rather than maintained as gitignore exceptions,
+# which don't compose cleanly with a whole-directory ignore rule like this one.
+/external/CardScripts/
+
+# Editor / IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini

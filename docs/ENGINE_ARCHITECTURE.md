@@ -1,0 +1,11 @@
+# Engine architecture
+
+Pinned dependencies are `ygopro-core` `9a0c558c2d686542f7914a6d529fd7aa57746aed`, CardScripts `6d4cfc16326ddb4c1d74f5835d8e43e2c8228007`, BabelCDB `7f3a3af2520a31122d6ed0db2077d3aba04a97d6`, and LFLists `931655bd21435ba6b1851f3c66e2d967f06ff4d6`.
+
+The current core API is version 11. `OCG_CreateDuel` receives four non-zero seed words, flags, player start settings, a card-data callback, and a script callback. Cards enter through `OCG_DuelNewCard`; decks are cards with `LOCATION_DECK`. `OCG_StartDuel` queues startup. `OCG_DuelProcess` runs until it ends, needs a response, or has messages. `OCG_DuelGetMessage` returns a transient buffer containing `[u32 length][message]` frames. `OCG_DuelSetResponse` copies the selected response.
+
+Card metadata is supplied synchronously by `OCG_DataReader` as `OCG_CardData`. `src/cards/CardDatabase` reads BabelCDB's SQLite files and provides its required type, stats, attributes, race, alias, and zero-terminated setcode data. It resolves a canonical card ID to a GOAT compatibility entry when `goat-entries.cdb` aliases that canonical ID. Scripts are requested lazily as `c<passcode>.lua` by `OCG_ScriptReader`. Global scripts are loaded before startup with `OCG_LoadScript`; Phase 1 loads `constant.lua` and `utility.lua`, whose relative loads are routed through the same callback. The core's query API (`OCG_DuelQuery*`) is the source for future public, player-relative state snapshots.
+
+The message boundary in `src/main.cpp` validates frame lengths before dispatch. It decodes turn, phase, draw, summon, attack, damage, and win events for the log, while its player-decision bridge encodes only engine-offered idle/battle actions and common place, position, card-selection, and tribute-selection responses. The bridge publishes a player-safe snapshot with LP, hand counts, and visible monster zones; opponent facedown identities are masked before leaving the engine process. Unsupported prompts fail explicitly, never fabricate state or use an illegal direct mutation.
+
+The intended next extraction is `cards/` (CDB reader and format-aware script resolver), `protocol/` (every prompt parser/encoder), `game/` (public observations), and `ai/` (agents). The included normal-monster harness isolates this pipeline before effects and complex selection prompts are enabled.

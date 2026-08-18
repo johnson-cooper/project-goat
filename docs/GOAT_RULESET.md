@@ -1,0 +1,7 @@
+# GOAT ruleset
+
+The engine flags are centralized in `formats/goat.json` and passed as `DUEL_MODE_GOAT`, the current core composite flag. In this pinned core it includes Master Rule 1 behavior, including first-turn draw and obsolete ignition priority, plus GOAT-specific TCG fast-effect, trap-chain, six-step battle, private-knowledge trigger, historical equipment, zero-ATK destruction, replay, damage-substep, reposition, and SEGOC flags. The exact bit composition is defined by the pinned `external/ygopro-core/ocgapi_constants.h` and mirrored in CardScripts `constant.lua`.
+
+CardScripts' `goat/` directory is not a passcode-shadow directory: its files use compatibility passcodes in the `504700xxx` range (for example, GOAT Scapegoat is `504700123`). Therefore Phase 1 does not blindly prefer `goat/c<normal-passcode>.lua`. The future CDB/format layer must map the April 2005 printing to the appropriate compatibility code and metadata, then load that code's script. Normal legal card IDs use the selected historical/pre-errata/official mapping from that same data source.
+
+The 40-card sample decks are only smoke-test decks. They do not claim to be an April 2005 tournament card pool or banlist. The pinned Project Ignis `BabelCDB` dependency now provides `cards.cdb` plus `goat-entries.cdb`, and pinned `LFLists/GOAT.lflist.conf` contains the `2005.4 GOAT` list. The next implementation step is to query those sources rather than retain the smoke-test metadata map.

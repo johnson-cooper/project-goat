@@ -1,0 +1,14 @@
+{
+  "name": "GOAT Format (April 2005)",
+  "startingLifePoints": 8000,
+  "startingHand": 5,
+  "mainDeckMin": 40,
+  "mainDeckMax": 60,
+  "sideDeckMax": 15,
+  "fusionDeckMax": null,
+  "engineFlags": "DUEL_MODE_GOAT",
+  "cardPool": "pre-Cybernetic Revolution",
+  "banlist": "external/LFLists/GOAT.lflist.conf",
+  "cardDatabase": "external/BabelCDB/cards.cdb",
+  "goatCompatibilityDatabase": "external/BabelCDB/goat-entries.cdb"
+}

@@ -1,0 +1,110 @@
+[
+  {
+    "id": "flc3_3rd_aggro",
+    "name": "Aggro Rookie",
+    "difficulty": 1,
+    "tier": 1,
+    "deck": "decks/starter/flc3-3rd-aggro.ydk",
+    "agent": "random",
+    "rewards": { "credits": 60, "pack": "goat-starter" }
+  },
+  {
+    "id": "flc2_3rd_goat",
+    "name": "Goat Hopeful",
+    "difficulty": 1,
+    "tier": 1,
+    "deck": "decks/starter/flc2-3rd-goat.ydk",
+    "agent": "random",
+    "rewards": { "credits": 65, "pack": "goat-starter" }
+  },
+  {
+    "id": "flc3_3rd_goat",
+    "name": "Goat Contender",
+    "difficulty": 2,
+    "tier": 1,
+    "deck": "decks/starter/flc3-3rd-goat.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 70, "pack": "goat-starter" }
+  },
+  {
+    "id": "flc1_3rd_chaos_con",
+    "name": "Chaos Apprentice",
+    "difficulty": 2,
+    "tier": 1,
+    "deck": "decks/starter/flc1-3rd-chaos-con.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 75, "pack": "goat-starter" }
+  },
+  {
+    "id": "flc2_3rd_chaos_con",
+    "name": "Chaos Tactician",
+    "difficulty": 2,
+    "tier": 1,
+    "deck": "decks/starter/flc2-3rd-chaos-con.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 80, "pack": "goat-starter" }
+  },
+  {
+    "id": "flc1_2nd_gearfried",
+    "name": "Gearfried Duelist",
+    "difficulty": 3,
+    "tier": 2,
+    "deck": "decks/starter/flc1-2nd-gearfried.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 120, "pack": "goat-classics" }
+  },
+  {
+    "id": "flc2_2nd_goat",
+    "name": "Goat Finalist",
+    "difficulty": 3,
+    "tier": 2,
+    "deck": "decks/starter/flc2-2nd-goat.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 130, "pack": "goat-classics" }
+  },
+  {
+    "id": "flc3_2nd_chaos_con",
+    "name": "Chaos Finalist",
+    "difficulty": 3,
+    "tier": 2,
+    "deck": "decks/starter/flc3-2nd-chaos-con.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 140, "pack": "goat-classics" }
+  },
+  {
+    "id": "tide_master",
+    "name": "Tide Master",
+    "difficulty": 3,
+    "tier": 2,
+    "deck": "decks/starter/water-fusion.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 150, "pack": "goat-classics" }
+  },
+  {
+    "id": "flc2_1st_chaos_turbo",
+    "name": "Chaos Turbo Champion",
+    "difficulty": 4,
+    "tier": 3,
+    "deck": "decks/starter/flc2-1st-chaos-tur.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 180, "pack": "goat-classics" }
+  },
+  {
+    "id": "flc1_1st_goat",
+    "name": "Goat Champion",
+    "difficulty": 5,
+    "tier": 3,
+    "deck": "decks/starter/flc1-1st-goat.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 200, "pack": "goat-classics" }
+  },
+  {
+    "id": "flc3_1st_burn",
+    "name": "Burn Champion",
+    "difficulty": 5,
+    "tier": 3,
+    "deck": "decks/starter/flc3-1st-burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": { "credits": 220, "pack": "goat-classics" }
+  }
+]
