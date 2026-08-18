@@ -1483,22 +1483,42 @@ ActionLayout build_action_layout(AppState& state) {
                 if (!alreadyHasVerb) actions.push_back(i);
                 mappedHandActions.insert(i);
             } else if (isChangePosition || isActivate) {
+                // Two or more copies of the same monster/set card each publish
+                // their own "Change position"/"Activate" legal action with
+                // identical text — the engine's wire format for these only
+                // ever names the *card*, never which physical zone. Without
+                // skipping a zone that already has this exact action's text,
+                // every copy's action matched the same first zone with that
+                // code, showing N duplicate entries in that one zone's popup
+                // while every other copy's zone showed none at all. The
+                // engine publishes these lists (repositionable_cards for
+                // Change Position; select_chains for Activate) in the same
+                // order the matching zones are walked here, so skipping an
+                // already-claimed zone naturally pairs the Nth published
+                // action with the Nth zone that still needs one.
+                auto alreadyHasVerb = [&](const std::vector<size_t>& actions) {
+                    return std::any_of(actions.begin(), actions.end(), [&](size_t existing) {
+                        return short_action_label(state.legal_actions[existing].label) == short_action_label(text);
+                    });
+                };
                 bool matched = false;
                 for (int slot = 0; slot < 5 && !matched; ++slot) {
                     const auto& card = state.monsters[0][static_cast<size_t>(slot)];
-                    if (card.occupied && card.code == action.code) {
-                        layout.monster_board_actions[slot].push_back(i);
-                        mappedBoardActions.insert(i);
-                        matched = true;
-                    }
+                    if (!card.occupied || card.code != action.code) continue;
+                    auto& actions = layout.monster_board_actions[slot];
+                    if (alreadyHasVerb(actions)) continue;
+                    actions.push_back(i);
+                    mappedBoardActions.insert(i);
+                    matched = true;
                 }
                 for (int slot = 0; slot < 6 && !matched && isActivate; ++slot) {
                     const auto& card = state.spells[0][static_cast<size_t>(slot)];
-                    if (card.occupied && card.code == action.code) {
-                        layout.spell_board_actions[slot].push_back(i);
-                        mappedBoardActions.insert(i);
-                        matched = true;
-                    }
+                    if (!card.occupied || card.code != action.code) continue;
+                    auto& actions = layout.spell_board_actions[slot];
+                    if (alreadyHasVerb(actions)) continue;
+                    actions.push_back(i);
+                    mappedBoardActions.insert(i);
+                    matched = true;
                 }
                 // If no board zone matches either, it falls through to the
                 // panel below rather than silently disappearing.
