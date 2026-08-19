@@ -35,6 +35,22 @@ node_modules/
 # tracked subset ever needs to grow — see that subset staged with `git add
 # -f` (bypassing this ignore) rather than maintained as gitignore exceptions,
 # which don't compose cleanly with a whole-directory ignore rule like this one.
+#
+# The root-level *.lua files (constant.lua, utility.lua, chain.lua, every
+# proc_*.lua, ...) are a different category from the rest of that trimmed
+# subset and are ALL force-added, not trimmed: they're shared infrastructure
+# utility.lua/constant.lua pull in via Duel.LoadScript at engine startup
+# (e.g. utility.lua unconditionally does Duel.LoadScript("proc_fusion.lua")),
+# not per-card scripts, so any card whose effect depends on one of them
+# breaks silently the moment that one file is missing — not just the cards
+# that specific file is "for". A from-scratch checkout that only had the
+# trimmed per-card subset (this ignore rule's original scope) discovered
+# this the hard way: every Fusion-related card silently failed with "attempt
+# to index a nil value (global 'Fusion')" since proc_fusion.lua was never
+# force-added, while a dev machine with a full upstream clone sitting around
+# never saw it. Keep this whole set force-added, and check `Duel.LoadScript(`
+# in constant.lua/utility.lua for the current complete list if it ever needs
+# revisiting.
 /external/CardScripts/
 
 # Editor / IDE
