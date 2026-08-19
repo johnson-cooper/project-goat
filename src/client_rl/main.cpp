@@ -1093,6 +1093,15 @@ std::vector<uint32_t> filtered_collection(goat::CardDatabase& database, const st
 
 enum class Screen { Title, Hub, Collection, Shop, PackOpening, DeckEditor, DeckList, CpuSelect, Duel, Options };
 
+// Which pile the duel board's Graveyard/Banished viewer overlay (see
+// draw_pile_viewer) is currently showing — None means the overlay is
+// closed. Not a Screen: it's a modal drawn on top of Screen::Duel, not a
+// navigation target of its own (see AppState::viewing_pile_kind).
+// Extra deck is player-only (see AppState::extra_cards) — unlike Grave/
+// Banished, there's no "opponent's Extra" viewer at all; opening one always
+// implies viewing_pile_player == 0.
+enum class PileKind { None, Grave, Banished, Extra };
+
 // Menu screens (everything but Duel) all share one continuous music
 // context — see desired_music_for below — but Options is reachable from any
 // of them, so BACK needs to know which one to return to rather than
@@ -1207,6 +1216,24 @@ struct AppState {
     uint8_t turn_player{};
     uint32_t turn_number{};
     uint16_t phase{};
+
+    // ---- Graveyard/Banished pile viewer (see draw_pile_viewer) ----
+    // Populated from state.txt's gravecards=/banishedcards= lines the same
+    // way hand_cards is from handcards=; unlike hand_cards, both players'
+    // piles are (mostly — see the engine's own write_board_state comment on
+    // face-down banished cards) public information, so both indices are
+    // always populated, not just the local human player's.
+    std::array<std::vector<uint32_t>, 2> grave_cards{};
+    std::array<std::vector<uint32_t>, 2> banished_cards{};
+    // Extra deck is private information (only its owner knows what's left in
+    // it), same as hand_cards — a flat vector for the same reason hand_cards
+    // is: the engine only ever writes the local human player's own extracards=
+    // line, never the opponent's (see write_board_state).
+    std::vector<uint32_t> extra_cards;
+    PileKind viewing_pile_kind = PileKind::None;
+    int viewing_pile_player = -1;   // 0 = you, 1 = opponent; meaningless when viewing_pile_kind == None or Extra (always "you")
+    int viewing_pile_selected = -1; // index into the relevant pile vector, or -1
+    size_t viewing_pile_page{};
 
     uint32_t last_inspected_code{};
     bool last_inspected_is_back{};
@@ -1750,6 +1777,8 @@ void start_player_duel(AppState& state, bool test_mode) {
     state.life = {8000, 8000}; state.life_display = {8000.0, 8000.0};
     state.hand_count = {}; state.deck_count = {}; state.grave_count = {}; state.extra_count = {}; state.banished_count = {};
     state.monsters = {}; state.spells = {}; state.hand_cards.clear();
+    state.grave_cards = {}; state.banished_cards = {}; state.extra_cards.clear();
+    state.viewing_pile_kind = PileKind::None; state.viewing_pile_player = -1; state.viewing_pile_selected = -1; state.viewing_pile_page = 0;
     state.turn_player = 0; state.turn_number = 0; state.phase = 0;
     state.legal_actions.clear(); state.action_layout = ActionLayout{}; state.action_page = 0; state.prompt_title.clear();
     state.open_hand_card = -1; state.selected_monster_zone = -1; state.selected_spell_zone = -1;
@@ -1974,6 +2003,9 @@ void poll_board_snapshot(AppState& state) {
     for (auto& player : state.monsters) for (auto& cell : player) cell = {};
     for (auto& player : state.spells) for (auto& cell : player) cell = {};
     state.hand_cards.clear();
+    for (auto& cards : state.grave_cards) cards.clear();
+    for (auto& cards : state.banished_cards) cards.clear();
+    state.extra_cards.clear();
     std::istringstream lines(text); std::string line;
     while (std::getline(lines, line)) {
         const auto equals = line.find('='); if (equals == std::string::npos) continue;
@@ -1996,6 +2028,9 @@ void poll_board_snapshot(AppState& state) {
             state.monsters[fields[0]][fields[1]] = {true, fields[2], static_cast<uint8_t>(fields[3]), static_cast<int32_t>(fields[4]), static_cast<int32_t>(fields[5])};
         else if (key == "spell" && fields.size() == 4 && fields[0] < 2 && fields[1] < 6) state.spells[fields[0]][fields[1]] = {true, fields[2], static_cast<uint8_t>(fields[3])};
         else if (key == "handcards" && !fields.empty() && fields[0] < 2) state.hand_cards.assign(fields.begin() + 1, fields.end());
+        else if (key == "gravecards" && !fields.empty() && fields[0] < 2) state.grave_cards[fields[0]].assign(fields.begin() + 1, fields.end());
+        else if (key == "banishedcards" && !fields.empty() && fields[0] < 2) state.banished_cards[fields[0]].assign(fields.begin() + 1, fields.end());
+        else if (key == "extracards" && !fields.empty() && fields[0] < 2) state.extra_cards.assign(fields.begin() + 1, fields.end());
     }
     emit_board_diff_sfx(state, prevLife, prevMonsters, prevSpells);
 }
@@ -2724,8 +2759,13 @@ void draw_card_slot(AppState& state, const Rect& cell, const FieldCard& card, bo
     else if (hovered) draw_rect_outline(inset(footprint, -2), 2.0f, theme::gold);
 }
 
-void draw_pile_zone(const Font& font, const Rect& cell, const char* label, uint32_t count, const UiScale& scale) {
-    draw_panel(cell, theme::panel, true, theme::panelBorder);
+// `hovered` only ever means something for Grave/Banished (see
+// resolve_duel_click's pile-viewer-opening branch and draw_pile_viewer) —
+// Deck/Extra aren't clickable (their contents are hidden or, for Extra,
+// already fully visible in the Deck Editor), so their call sites just leave
+// it at the default.
+void draw_pile_zone(const Font& font, const Rect& cell, const char* label, uint32_t count, const UiScale& scale, bool hovered = false) {
+    draw_panel(cell, hovered ? theme::hover : theme::panel, true, hovered ? theme::gold : theme::panelBorder);
     const Rect labelRect{cell.left, cell.top + scale.px(2), cell.right, cell.top + cell.height() / 2};
     draw_text(font, label, labelRect, static_cast<float>(scale.points(8)), theme::textSecondary, {HAlign::Center, VAlign::Center, false, false});
     const Rect countRect{cell.left, cell.top + cell.height() / 2, cell.right, cell.bottom - scale.px(2)};
@@ -3043,6 +3083,30 @@ void draw_hand_popup(AppState& state, const DuelLayout& L, const UiScale& scale,
 // src/client/main.cpp's own separate handle_duel_click — this is one
 // dedicated function, called once per frame before drawing, mirroring the
 // original's priority order exactly.
+// Opens the Graveyard/Banished pile viewer overlay (see draw_pile_viewer)
+// for `player`'s `kind` pile, or closes it if that exact pile is already
+// open — a toggle, like selecting/deselecting a board zone elsewhere in this
+// file. Resets the page/selection either way so a stale selection from a
+// previously viewed pile never leaks into the next one.
+void open_pile_view(AppState& state, int player, PileKind kind) {
+    if (state.viewing_pile_kind == kind && state.viewing_pile_player == player) {
+        state.viewing_pile_kind = PileKind::None;
+        state.viewing_pile_player = -1;
+    } else {
+        state.viewing_pile_kind = kind;
+        state.viewing_pile_player = player;
+    }
+    state.viewing_pile_selected = -1;
+    state.viewing_pile_page = 0;
+}
+
+const std::vector<uint32_t>& pile_cards(AppState& state, int player, PileKind kind) {
+    static const std::vector<uint32_t> empty;
+    if (kind == PileKind::Extra) return state.extra_cards; // player-only — `player` is ignored, always "you"
+    if (player < 0 || player > 1 || kind == PileKind::None) return empty;
+    return kind == PileKind::Grave ? state.grave_cards[static_cast<size_t>(player)] : state.banished_cards[static_cast<size_t>(player)];
+}
+
 void resolve_duel_click(AppState& state, const DuelLayout& L, const UiScale& scale, Vector2 mouse) {
     const int x = static_cast<int>(mouse.x), y = static_cast<int>(mouse.y);
     if (!state.player_process.valid()) {
@@ -3075,6 +3139,24 @@ void resolve_duel_click(AppState& state, const DuelLayout& L, const UiScale& sca
     // screen position in a brand-new, unrelated prompt.
     constexpr double kClickDebounceSeconds = 0.3;
     if (GetTime() - state.last_submit_time < kClickDebounceSeconds) return;
+
+    // Graveyard/Banished piles aren't part of the normal action flow — a
+    // click there always opens (or, on a second click on the same one,
+    // closes) the pile viewer overlay, regardless of whatever prompt/zone-
+    // placement mode is otherwise active. Placed before every branch below
+    // so it's never swallowed by e.g. all_zone_placement's own unconditional
+    // `return` once a placement prompt is in progress. paint_duel itself
+    // skips calling this function at all while the viewer is already open
+    // (see its own comment), so there's no risk of a click meant for the
+    // viewer's own grid/buttons reopening or double-handling here.
+    if (L.player_grave.contains(x, y)) { open_pile_view(state, 0, PileKind::Grave); return; }
+    if (L.opponent_grave.contains(x, y)) { open_pile_view(state, 1, PileKind::Grave); return; }
+    if (L.player_banished.contains(x, y)) { open_pile_view(state, 0, PileKind::Banished); return; }
+    if (L.opponent_banished.contains(x, y)) { open_pile_view(state, 1, PileKind::Banished); return; }
+    // Extra deck is player-only — deliberately no L.opponent_extra branch
+    // here at all, so the opponent's extra deck (private information, see
+    // write_board_state) never gets a click target of any kind.
+    if (L.player_extra.contains(x, y)) { open_pile_view(state, 0, PileKind::Extra); return; }
 
     // A "#SELECT <min> <max>" prompt (see AppState::multi_select_active)
     // takes over every click while active: it isn't a normal action list, so
@@ -3215,6 +3297,101 @@ void resolve_duel_click(AppState& state, const DuelLayout& L, const UiScale& sca
     }
 }
 
+// ---------- duel board: Graveyard/Banished pile viewer ----------
+
+// A centered modal panel over the duel board — reuses the same card-grid +
+// side detail panel + pager recipe as Collection/Deck Editor's pool
+// (compute_card_grid_layout), just with a CLOSE button up top instead of
+// living on its own Screen.
+struct PileViewLayout { Rect panel, header, close_button, detail; Rect grid_area; CardGridLayout grid; Rect prev_button, next_button, page_label; };
+
+PileViewLayout compute_pile_view_layout(const Rect& client, size_t card_count, const UiScale& scale) {
+    PileViewLayout L;
+    const int panelWidth = std::clamp(client.width() - scale.px(80), scale.px(360), scale.px(880));
+    const int panelHeight = std::clamp(client.height() - scale.px(80), scale.px(280), scale.px(560));
+    L.panel = centered(client, panelWidth, panelHeight);
+    Rect inner = inset(L.panel, scale.px(20));
+
+    Rect headerRow = cut_top(inner, scale.px(30));
+    L.close_button = cut_right(headerRow, scale.px(90));
+    L.header = headerRow;
+    cut_top(inner, scale.px(10));
+
+    const int detailWidth = std::clamp(scale.px(220), 160, std::max(160, inner.width() / 3));
+    L.detail = cut_right(inner, detailWidth);
+    cut_right(inner, scale.px(14));
+
+    // Local pager strip at the bottom, unconditionally reserved (matches
+    // compute_deck_editor_layout's own pool pager) — its buttons just sit
+    // disabled (see draw_pile_viewer's offscreen-mouse trick) when there's
+    // only one page.
+    Rect pagerRow = cut_bottom(inner, scale.px(26));
+    cut_bottom(inner, scale.px(6));
+    const int pagerButtonWidth = scale.px(70);
+    L.prev_button = {pagerRow.left, pagerRow.top, pagerRow.left + pagerButtonWidth, pagerRow.bottom};
+    L.next_button = {pagerRow.right - pagerButtonWidth, pagerRow.top, pagerRow.right, pagerRow.bottom};
+    L.page_label = {L.prev_button.right + scale.px(8), pagerRow.top, L.next_button.left - scale.px(8), pagerRow.bottom};
+
+    L.grid_area = inner;
+    L.grid = compute_card_grid_layout(inner, card_count, scale);
+    return L;
+}
+
+// Draws (and, via its own button()/hit-test calls, handles clicks for) the
+// Graveyard/Banished viewer overlay when one is open — a no-op otherwise.
+// Deliberately draws on top of everything else paint_duel draws (called
+// last there) and, while open, is the *only* thing that gets this frame's
+// click at all: paint_duel skips calling resolve_duel_click entirely in
+// that case, so a click meant for the grid/CLOSE/pager here can never also
+// land on the board underneath it.
+void draw_pile_viewer(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
+    if (state.viewing_pile_kind == PileKind::None) return;
+    const auto& cards = pile_cards(state, state.viewing_pile_player, state.viewing_pile_kind);
+    const auto L = compute_pile_view_layout(client, cards.size(), scale);
+    state.viewing_pile_page = std::min(state.viewing_pile_page, L.grid.page_count - 1);
+
+    // Dims the board behind the modal so it reads unambiguously as a popup
+    // rather than part of the normal board.
+    DrawRectangle(client.left, client.top, client.width(), client.height(), Color{0, 0, 0, 140});
+    draw_panel(L.panel, theme::panel, true, theme::gold);
+
+    const std::string owner = state.viewing_pile_player == 0 ? "YOUR " : "OPPONENT'S ";
+    const std::string kindLabel = state.viewing_pile_kind == PileKind::Grave ? "GRAVEYARD"
+        : state.viewing_pile_kind == PileKind::Banished ? "BANISHED" : "EXTRA DECK";
+    const std::string title = owner + kindLabel + " (" + std::to_string(cards.size()) + ")";
+    draw_text(state.font, title, L.header, static_cast<float>(scale.points(16)), theme::gold, {HAlign::Left, VAlign::Center, false, false});
+    if (button(state.font, L.close_button, "CLOSE", nullptr, scale, mouse, clicked)) {
+        state.viewing_pile_kind = PileKind::None;
+        state.viewing_pile_player = -1;
+        return;
+    }
+
+    draw_panel(L.detail, theme::panel, true, theme::panelBorder);
+    const uint32_t selectedCode = (state.viewing_pile_selected >= 0 && static_cast<size_t>(state.viewing_pile_selected) < cards.size())
+        ? cards[static_cast<size_t>(state.viewing_pile_selected)] : 0;
+    draw_card_detail(state, inset(L.detail, scale.px(12)), selectedCode, scale);
+
+    const size_t first = state.viewing_pile_page * L.grid.per_page;
+    for (size_t slot = 0; slot < L.grid.cards.size() && first + slot < cards.size(); ++slot) {
+        const size_t index = first + slot;
+        const Rect& r = L.grid.cards[slot];
+        const bool selected = state.viewing_pile_selected == static_cast<int>(index);
+        const bool hovered = r.contains(static_cast<int>(mouse.x), static_cast<int>(mouse.y));
+        draw_panel(r, Color{24, 24, 30, 255}, true, selected ? theme::gold : (hovered ? theme::legal : theme::panelBorder));
+        draw_bitmap_fit(get_card_texture(state, cards[index]), r);
+        if (hovered && clicked) state.viewing_pile_selected = static_cast<int>(index);
+    }
+    if (cards.empty()) {
+        draw_text(state.font, "Empty.", L.grid_area, static_cast<float>(scale.points(13)), theme::textSecondary, {HAlign::Center, VAlign::Center, false, false});
+    }
+
+    const Vector2 offscreen{-1, -1};
+    if (button(state.font, L.prev_button, "\xE2\x80\xB9 PREV", nullptr, scale, state.viewing_pile_page > 0 ? mouse : offscreen, clicked)) --state.viewing_pile_page;
+    const std::string pageLabel = "PAGE " + std::to_string(state.viewing_pile_page + 1) + "/" + std::to_string(L.grid.page_count);
+    draw_text(state.font, pageLabel, L.page_label, static_cast<float>(scale.points(11)), theme::textSecondary, {HAlign::Center, VAlign::Center, false, false});
+    if (button(state.font, L.next_button, "NEXT \xE2\x80\xBA", nullptr, scale, state.viewing_pile_page + 1 < L.grid.page_count ? mouse : offscreen, clicked)) ++state.viewing_pile_page;
+}
+
 void paint_duel(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
     // Throttled to roughly the Win32 client's own WM_TIMER(150ms) cadence
     // rather than running every frame (an earlier version of this function
@@ -3265,7 +3442,12 @@ void paint_duel(AppState& state, const Rect& client, const UiScale& scale, Vecto
     }
 
     const DuelLayout L = compute_duel_layout(client, scale);
-    if (clicked) resolve_duel_click(state, L, scale, mouse);
+    // While the pile viewer overlay is open, it alone gets this frame's
+    // click (handled inside draw_pile_viewer itself, called at the very end
+    // of this function) — skipping resolve_duel_click here is what stops a
+    // click on the viewer's own grid/CLOSE/pager from also landing on
+    // whatever's underneath it on the board.
+    if (clicked && state.viewing_pile_kind == PileKind::None) resolve_duel_click(state, L, scale, mouse);
 
     const DuelHover hover = compute_duel_hover(state, L, static_cast<int>(mouse.x), static_cast<int>(mouse.y));
     if (hover.inspect_code) { state.last_inspected_code = hover.inspect_code; state.last_inspected_is_back = false; }
@@ -3312,13 +3494,13 @@ void paint_duel(AppState& state, const Rect& client, const UiScale& scale, Vecto
     draw_card_slot(state, L.opponent_spells[5], state.spells[1][5], false, "FIELD", scale, false, false,
                    candOpponentField >= 0 && state.multi_select_toggled[static_cast<size_t>(candOpponentField)]);
     draw_pile_zone(state.font, L.player_deck, "DECK", state.deck_count[0], scale);
-    draw_pile_zone(state.font, L.player_extra, "EXTRA", state.extra_count[0], scale);
-    draw_pile_zone(state.font, L.player_grave, "GRAVE", state.grave_count[0], scale);
-    draw_pile_zone(state.font, L.player_banished, "BANISH", state.banished_count[0], scale);
+    draw_pile_zone(state.font, L.player_extra, "EXTRA", state.extra_count[0], scale, L.player_extra.contains(static_cast<int>(mouse.x), static_cast<int>(mouse.y)));
+    draw_pile_zone(state.font, L.player_grave, "GRAVE", state.grave_count[0], scale, L.player_grave.contains(static_cast<int>(mouse.x), static_cast<int>(mouse.y)));
+    draw_pile_zone(state.font, L.player_banished, "BANISH", state.banished_count[0], scale, L.player_banished.contains(static_cast<int>(mouse.x), static_cast<int>(mouse.y)));
     draw_pile_zone(state.font, L.opponent_deck, "DECK", state.deck_count[1], scale);
     draw_pile_zone(state.font, L.opponent_extra, "EXTRA", state.extra_count[1], scale);
-    draw_pile_zone(state.font, L.opponent_grave, "GRAVE", state.grave_count[1], scale);
-    draw_pile_zone(state.font, L.opponent_banished, "BANISH", state.banished_count[1], scale);
+    draw_pile_zone(state.font, L.opponent_grave, "GRAVE", state.grave_count[1], scale, L.opponent_grave.contains(static_cast<int>(mouse.x), static_cast<int>(mouse.y)));
+    draw_pile_zone(state.font, L.opponent_banished, "BANISH", state.banished_count[1], scale, L.opponent_banished.contains(static_cast<int>(mouse.x), static_cast<int>(mouse.y)));
 
     draw_hud_bar(state, L.opponent_hud, true, scale);
     draw_hud_bar(state, L.player_hud, false, scale);
@@ -3327,6 +3509,11 @@ void paint_duel(AppState& state, const Rect& client, const UiScale& scale, Vecto
     draw_hand_row(state, L.player_hand, true, hover, scale);
     draw_prompt_panel(state, L.prompt_panel, scale, mouse);
     draw_hand_popup(state, L, scale, mouse);
+
+    // Drawn last so it's on top of everything else on the board — see its
+    // own doc-comment, and the resolve_duel_click gate above, for how its
+    // clicks stay isolated from the board underneath while it's open.
+    draw_pile_viewer(state, client, scale, mouse, clicked);
 }
 
 // Centralizes the screen -> music mapping in one place instead of scattering

@@ -628,6 +628,25 @@ struct BoardState {
  std::array<uint32_t,2> extra_count{};
  std::array<uint32_t,2> banished_count{};
  std::array<std::vector<uint32_t>,2> hand_cards{};
+ // Graveyard is always public information in real Yu-Gi-Oh (any card that
+ // lands there, however it got there, is visible to both players), so this
+ // is a plain code list — no position/masking needed, unlike hand_cards.
+ std::array<std::vector<uint32_t>,2> grave_cards{};
+ // Removed-from-play *can* be face-down for a handful of effects, so this
+ // keeps position alongside the code (mirrors monsters/spells' BoardCard)
+ // — write_board_state masks a face-down one the same way it already masks
+ // a face-down monster/spell.
+ // Extra deck is private information — visible only to the player who built
+ // it, same as hand_cards (write_board_state writes only human_player's own
+ // line, never the opponent's). Unlike hand/grave, its *starting* contents
+ // never arrive via a tracked MSG_MOVE/MSG_DRAW at all (OCG_DuelNewCard just
+ // silently stacks the deck at setup, before OCG_StartDuel even runs) — it's
+ // seeded directly from the loaded Deck::extra list right after `board` is
+ // constructed in main(), then MSG_MOVE below maintains it exactly like
+ // grave_cards as cards leave for the field (Fusion/Ritual Summon) or, rarely,
+ // return.
+ std::array<std::vector<uint32_t>,2> extra_cards{};
+ std::array<std::vector<BoardCard>,2> banished_cards{};
  uint8_t turn_player{};
  uint32_t turn_number{};
  uint16_t phase{PHASE_DRAW};
@@ -684,9 +703,32 @@ static void track_board_message(const uint8_t* data, size_t length, BoardState& 
    auto& cards=board.hand_cards[previous.player]; if(const auto it=std::find(cards.begin(),cards.end(),code); it!=cards.end()) cards.erase(it);
    if(board.hand[previous.player]) --board.hand[previous.player];
   }
+  // Grave/banished-pile card lists (see BoardState's own field comments) —
+  // erase-on-leave, push-on-arrive, exactly the hand_cards pattern above.
+  // Fires regardless of where a card is arriving from (deck, field, the
+  // other pile, ...), same as every case here — only `current`/`previous`'s
+  // own location matters, not how the card got there.
+  if(previous.player<2 && previous.location==LOCATION_GRAVE) {
+   auto& cards=board.grave_cards[previous.player]; if(const auto it=std::find(cards.begin(),cards.end(),code); it!=cards.end()) cards.erase(it);
+  }
+  if(previous.player<2 && previous.location==LOCATION_REMOVED) {
+   auto& cards=board.banished_cards[previous.player];
+   if(const auto it=std::find_if(cards.begin(),cards.end(),[code](const BoardCard& c){ return c.code==code; }); it!=cards.end()) cards.erase(it);
+  }
+  // Extra deck's *starting* contents are seeded directly in main() (see the
+  // field comment on BoardState::extra_cards) — this only maintains it
+  // afterward, same erase-on-leave/push-on-arrive shape as grave, for the
+  // rare case a card actually moves out of (Fusion/Ritual Summon) or back
+  // into the extra deck mid-duel.
+  if(previous.player<2 && previous.location==LOCATION_EXTRA) {
+   auto& cards=board.extra_cards[previous.player]; if(const auto it=std::find(cards.begin(),cards.end(),code); it!=cards.end()) cards.erase(it);
+  }
   if(current.player<2 && current.location==LOCATION_MZONE && current.sequence<5) board.monsters[current.player][current.sequence]={code,static_cast<uint8_t>(current.position)};
   if(current.player<2 && current.location==LOCATION_SZONE && current.sequence<6) board.spells[current.player][current.sequence]={code,static_cast<uint8_t>(current.position)};
   if(current.player<2 && current.location==LOCATION_HAND) { board.hand_cards[current.player].push_back(code); ++board.hand[current.player]; }
+  if(current.player<2 && current.location==LOCATION_GRAVE) board.grave_cards[current.player].push_back(code);
+  if(current.player<2 && current.location==LOCATION_REMOVED) board.banished_cards[current.player].push_back({code,static_cast<uint8_t>(current.position)});
+  if(current.player<2 && current.location==LOCATION_EXTRA) board.extra_cards[current.player].push_back(code);
   return;
  }
  if(kind == MSG_POS_CHANGE) {
@@ -821,6 +863,34 @@ static void write_board_state(const fs::path& directory, const BoardState& board
   for(const auto code : cards) out << ',' << code;
   out << '\n';
  }
+ // Same visibility rule as hand: only the human player's own extra deck is
+ // ever written — the opponent's stays unlisted (their own extra deck count
+ // is still visible via extra= above, same as it always was).
+ if(human_player==0 || human_player==1) {
+  const auto& cards=board.extra_cards[human_player];
+  out << "extracards=" << human_player;
+  for(const auto code : cards) out << ',' << code;
+  out << '\n';
+ }
+ // Graveyard is always public — both players' full code lists are written
+ // unmasked, unlike hand. One line per player (player index first field),
+ // same shape as handcards= above.
+ for(uint8_t player=0;player<2;++player) {
+  out << "gravecards=" << int(player);
+  for(const auto code : board.grave_cards[player]) out << ',' << code;
+  out << '\n';
+ }
+ // Banished can be face-down for a handful of effects — masked the same way
+ // (and for the same reason) as a face-down monster/spell above: hidden
+ // when it's the opponent's (player==1) and face-down, visible otherwise.
+ for(uint8_t player=0;player<2;++player) {
+  out << "banishedcards=" << int(player);
+  for(const auto& card : board.banished_cards[player]) {
+   const bool hidden=(player==1 && (card.position & POS_FACEDOWN));
+   out << ',' << (hidden ? 0u : card.code);
+  }
+  out << '\n';
+ }
  out.close(); std::error_code ignored; fs::rename(temporary,output,ignored); if(ignored) { fs::remove(output,ignored); fs::rename(temporary,output,ignored); }
 }
 
@@ -882,6 +952,11 @@ int main(int argc,char** argv) try {
  std::cout << "Loaded decks: Player 1=" << OCG_DuelQueryCount(duel,0,LOCATION_DECK) << "+" << OCG_DuelQueryCount(duel,0,LOCATION_EXTRA)
            << " extra, Player 2=" << OCG_DuelQueryCount(duel,1,LOCATION_DECK) << "+" << OCG_DuelQueryCount(duel,1,LOCATION_EXTRA) << " extra\n";
  OCG_StartDuel(duel); RandomAgent agent(human_player, decision_directory); BoardState board; int turns=0;
+ // Extra deck's starting contents never arrive via a message MSG_MOVE-style
+ // tracking would see (OCG_DuelNewCard above just silently stacks it before
+ // OCG_StartDuel even runs) — seeded directly from the same `a`/`b` Deck
+ // structs used to build the duel itself. See BoardState::extra_cards.
+ board.extra_cards[0]=a.extra; board.extra_cards[1]=b.extra;
  // One goat::ai::DuelAgent per non-human seat — the human seat (if any)
  // keeps using the legacy `agent` menu/file-IPC path above untouched. Both
  // seats get their own agent for CPU vs CPU; --ai-seed (default: --seed)
