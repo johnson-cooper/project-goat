@@ -22,9 +22,35 @@ try {
             # default index, throwing "invalid graphical action index" and
             # ending the duel. Write-then-rename (matching how the engine
             # itself publishes request.txt) makes it appear atomically.
-            $responseTemp = "$response.tmp"
-            Set-Content -LiteralPath $responseTemp -Value '0' -NoNewline
-            Move-Item -LiteralPath $responseTemp -Destination $response -Force
+            #
+            # A "#SELECT <min> <max>" prompt (choose_multi_menu's click-based
+            # multi-select — see src/main.cpp) expects a comma-separated list
+            # of *candidate* indices whose count is within [min,max], not a
+            # single index; answering it the same way as every other prompt
+            # ('0') is invalid input the engine will never accept, and this
+            # dumb driver never notices because it only (re)writes response.txt
+            # when one doesn't already exist yet. That silently deadlocked
+            # this test against the engine's own response-wait timeout.
+            # request.txt is published via write-then-rename, same as
+            # response.txt above, but the rename itself is not atomic against
+            # a concurrent reader on Windows — a read landing in that instant
+            # can find the file locked. Treat that the same as "not ready
+            # yet" and just retry on the next 100ms tick, rather than letting
+            # $ErrorActionPreference='Stop' abort the whole test over a
+            # transient lock.
+            $firstLine = $null
+            try { $firstLine = (Get-Content -LiteralPath $request -TotalCount 1 -ErrorAction Stop) } catch {}
+            if ($null -ne $firstLine) {
+                if ($firstLine -match '^#SELECT (\d+) (\d+)') {
+                    $min = [int]$Matches[1]
+                    $answer = if ($min -le 0) { '' } else { (0..($min - 1)) -join ',' }
+                } else {
+                    $answer = '0'
+                }
+                $responseTemp = "$response.tmp"
+                Set-Content -LiteralPath $responseTemp -Value $answer -NoNewline
+                Move-Item -LiteralPath $responseTemp -Destination $response -Force
+            }
         }
         Start-Sleep -Milliseconds 100
     }

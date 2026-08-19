@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <random>
 #include <stdexcept>
@@ -18,6 +19,17 @@
 
 #include "cards/CardDatabase.hpp"
 #include "deck/Banlist.hpp"
+
+#include "ai/AnnounceCardSolver.hpp"
+#include "ai/DecisionRequest.hpp"
+#include "ai/DecisionResponse.hpp"
+#include "ai/DuelAgent.hpp"
+#include "ai/DuelObservation.hpp"
+#include "ai/GoatAgent.hpp"
+#include "ai/ObservationBuilder.hpp"
+#include "ai/RandomAgent.hpp"
+#include "ai/executors/DeckArchetype.hpp"
+#include "ai/executors/GenericGoatExecutors.hpp"
 
 extern "C" {
 #include "ocgapi.h"
@@ -90,6 +102,12 @@ template<class T> static T read(const uint8_t*& p, const uint8_t* end) {
 }
 static std::string name(uint32_t code) { return g_database ? g_database->resolve(code).name : std::to_string(code); }
 using Response = std::array<uint8_t,64>;
+
+// One legal candidate for a "select N cards" prompt (MSG_SELECT_CARD,
+// MSG_SELECT_TRIBUTE) — the (controller, location, sequence) identity lets
+// the client correlate a candidate to the physical zone it's rendered in,
+// for click-to-select instead of a text menu; see choose_multi_menu.
+struct SelectionCandidate { std::string label; uint32_t code{}; uint8_t controller{}; uint8_t location{}; uint32_t sequence{}; };
 
 class RandomAgent {
 public:
@@ -259,26 +277,26 @@ public:
    throw std::runtime_error("no legal zone in place prompt");
   }
   if(kind == MSG_SELECT_TRIBUTE) {
-   const auto player = read<uint8_t>(p,end); read<uint8_t>(p,end); const auto min = read<uint32_t>(p,end); read<uint32_t>(p,end);
+   const auto player = read<uint8_t>(p,end); read<uint8_t>(p,end); const auto min = read<uint32_t>(p,end); const auto max = read<uint32_t>(p,end);
    const auto choices = read<uint32_t>(p,end);
    if(min > choices) throw std::runtime_error("invalid tribute-selection prompt");
-   std::vector<std::string> labels;
-   labels.reserve(choices);
-   for(uint32_t i=0;i<choices;++i) { const auto code=read<uint32_t>(p,end); read<uint8_t>(p,end); read<uint8_t>(p,end); read<uint32_t>(p,end); read<uint8_t>(p,end); labels.push_back(name(code)); }
-   if(decision_directory_ && player == human_player_ && min > 0 && min <= 14 && choices <= 12) {
-    return choose_menu(min == 1 ? "Choose a tribute" : "Choose tributes", selection_menu(labels, min, "Tribute "));
+   std::vector<SelectionCandidate> candidates;
+   candidates.reserve(choices);
+   for(uint32_t i=0;i<choices;++i) { const auto code=read<uint32_t>(p,end); const auto controller=read<uint8_t>(p,end); const auto location=read<uint8_t>(p,end); const auto sequence=read<uint32_t>(p,end); read<uint8_t>(p,end); candidates.push_back({name(code), code, controller, location, sequence}); }
+   if(decision_directory_ && player == human_player_) {
+    return choose_multi_menu(min == max ? (min == 1 ? "Choose a tribute" : "Choose tributes") : "Choose tributes", candidates, min, max);
    }
    return select_first(min);
   }
   if(kind == MSG_SELECT_CARD) {
    const auto player = read<uint8_t>(p,end); read<uint8_t>(p,end); const auto min = read<uint32_t>(p,end);
-   read<uint32_t>(p,end); const auto choices = read<uint32_t>(p,end);
+   const auto max = read<uint32_t>(p,end); const auto choices = read<uint32_t>(p,end);
    if(min > choices) throw std::runtime_error("invalid card-selection prompt");
-   std::vector<std::string> labels;
-   labels.reserve(choices);
-   for(uint32_t i=0;i<choices;++i) { const auto code=read<uint32_t>(p,end); read<uint8_t>(p,end); read<uint8_t>(p,end); read<uint32_t>(p,end); read<uint32_t>(p,end); labels.push_back(name(code)); }
-   if(decision_directory_ && player == human_player_ && min > 0 && min <= 14 && choices <= 12) {
-    return choose_menu(min == 1 ? "Choose a card" : "Choose cards", selection_menu(labels, min, "Select "));
+   std::vector<SelectionCandidate> candidates;
+   candidates.reserve(choices);
+   for(uint32_t i=0;i<choices;++i) { const auto code=read<uint32_t>(p,end); const auto controller=read<uint8_t>(p,end); const auto location=read<uint8_t>(p,end); const auto sequence=read<uint32_t>(p,end); read<uint32_t>(p,end); candidates.push_back({name(code), code, controller, location, sequence}); }
+   if(decision_directory_ && player == human_player_) {
+    return choose_multi_menu(min == max ? (min == 1 ? "Choose a card" : "Choose cards") : "Choose cards", candidates, min, max);
    }
    return select_first(min);
   }
@@ -349,6 +367,64 @@ public:
    if(selectableCount>0) return select_unselect_response(1,0);
    return select_unselect_response(-1,0);
   }
+  if(kind == MSG_ANNOUNCE_RACE) {
+   // field::process(Processors::AnnounceRace&) in playerop.cpp: player,
+   // count, available (u64 bitmask of RACE_* bits). Response is a u64
+   // bitmask with exactly `count` bits set, all within `available`.
+   const auto player=read<uint8_t>(p,end); const auto count=read<uint8_t>(p,end); const auto available=read<uint64_t>(p,end);
+   if(decision_directory_ && player == human_player_ && count == 1) {
+    std::vector<std::pair<std::string,Response>> choices;
+    for(int bit=0; bit<64; ++bit) { const uint64_t mask=uint64_t(1)<<bit; if(available & mask) choices.emplace_back("Declare Race "+std::to_string(mask), raw_response64(mask)); }
+    if(!choices.empty()) return choose_menu("Declare a Race", choices);
+   }
+   // count>1 (rare) has no interactive combination menu in this pass — the
+   // greedy take is always a legal declaration, just not a chosen one.
+   return raw_response64(take_first_n_bits(available, count));
+  }
+  if(kind == MSG_ANNOUNCE_ATTRIB) {
+   // field::process(Processors::AnnounceAttribute&): same shape as
+   // AnnounceRace, over a u32 bitmask of ATTRIBUTE_* bits.
+   const auto player=read<uint8_t>(p,end); const auto count=read<uint8_t>(p,end); const auto available=read<uint32_t>(p,end);
+   if(decision_directory_ && player == human_player_ && count == 1) {
+    std::vector<std::pair<std::string,Response>> choices;
+    for(int bit=0; bit<32; ++bit) { const uint32_t mask=uint32_t(1)<<bit; if(available & mask) choices.emplace_back("Declare Attribute "+std::to_string(mask), raw_response(static_cast<int32_t>(mask))); }
+    if(!choices.empty()) return choose_menu("Declare an Attribute", choices);
+   }
+   return raw_response(static_cast<int32_t>(take_first_n_bits(available, count)));
+  }
+  if(kind == MSG_ANNOUNCE_CARD) {
+   // field::process(Processors::AnnounceCard&): player, option count (u8),
+   // then that many u64 predicate opcodes a declared card's name must
+   // satisfy (see src/ai/AnnounceCardSolver.cpp — a full port of this
+   // engine's own is_declarable). Response is the declared card's code.
+   const auto player=read<uint8_t>(p,end); const auto count=read<uint8_t>(p,end);
+   std::vector<uint64_t> opcodes; opcodes.reserve(count);
+   for(uint8_t i=0;i<count;++i) opcodes.push_back(read<uint64_t>(p,end));
+   if(decision_directory_ && player == human_player_) {
+    const auto candidates = goat::ai::find_declarable_cards(*g_database, opcodes, 8);
+    std::vector<std::pair<std::string,Response>> choices;
+    for(const auto code : candidates) choices.emplace_back("Declare "+name(code)+" ["+image(code)+"]", raw_response(static_cast<int32_t>(code)));
+    if(!choices.empty()) return choose_menu("Declare a card name", choices);
+   }
+   const auto code = goat::ai::find_declarable_card(*g_database, opcodes);
+   if(!code) throw std::runtime_error("no card in the pinned pool satisfies this declare-a-card-name prompt");
+   return raw_response(static_cast<int32_t>(*code));
+  }
+  if(kind == MSG_ANNOUNCE_NUMBER) {
+   // field::process(Processors::AnnounceNumber&): same shape as
+   // AnnounceCard, but the response is an *index* into the offered values,
+   // not the value itself.
+   const auto player=read<uint8_t>(p,end); const auto count=read<uint8_t>(p,end);
+   std::vector<uint64_t> options; options.reserve(count);
+   for(uint8_t i=0;i<count;++i) options.push_back(read<uint64_t>(p,end));
+   if(options.empty()) throw std::runtime_error("empty announce-number prompt");
+   if(decision_directory_ && player == human_player_) {
+    std::vector<std::pair<std::string,Response>> choices;
+    for(size_t i=0;i<options.size();++i) choices.emplace_back("Declare "+std::to_string(options[i]), raw_response(static_cast<int32_t>(i)));
+    return choose_menu("Declare a number", choices);
+   }
+   return raw_response(0);
+  }
   // A nonzero default is intentionally rejected by the engine, exposing
   // unsupported protocol instead of silently cheating.
   throw std::runtime_error("unsupported decision message " + std::to_string(kind));
@@ -376,7 +452,35 @@ private:
    { std::ofstream out(temporary, std::ios::trunc); out << title << '\n'; for(size_t i=0;i<choices.size();++i) out << i << '|' << choices[i].first << '\n'; }
    fs::rename(temporary, request, ignored); if(ignored) throw std::runtime_error("cannot publish player decision request");
    for(int wait=0;wait<6000;++wait) {
-    if(fs::exists(response_file)) { std::ifstream in(response_file); size_t choice=choices.size(); in >> choice; fs::remove(response_file, ignored); fs::remove(request, ignored); if(choice < choices.size()) return choices[choice].second; throw std::runtime_error("invalid graphical action index"); }
+    // `fs::exists` can turn true a moment before a different process's write
+    // is actually visible to a read on this platform (observed via
+    // timestamped tracing: the client's write-then-rename of response.tmp
+    // to response.txt had *always* written "0", yet an immediate read here
+    // sometimes saw an empty file, leaving `choice` at its unread sentinel
+    // value — which happened to equal choices.size() whenever there was
+    // only one legal choice, so the very check meant to catch a genuinely
+    // invalid index instead fired on a merely-not-yet-flushed write, ending
+    // the duel with "invalid graphical action index" a few prompts in).
+    // Once the deck-aware CPU AI (src/ai/GoatAgent) started actively using
+    // spells/traps instead of the old passive baseline, decision prompts on
+    // both seats — including this one — started arriving close enough
+    // together in wall-clock time to make this race easy to hit, where it
+    // had been vanishingly rare before. Guard against it by only consuming
+    // the file once it has visible content, and only ever treating a
+    // *genuinely* out-of-range index (not a stream-extraction failure) as
+    // an invalid response.
+    std::error_code size_error; const auto size = fs::file_size(response_file, size_error);
+    if(!size_error && size > 0) {
+     std::ifstream in(response_file); size_t choice=choices.size(); in >> choice;
+     if(!in.fail()) {
+      fs::remove(response_file, ignored); fs::remove(request, ignored);
+      if(choice < choices.size()) return choices[choice].second;
+      throw std::runtime_error("invalid graphical action index");
+     }
+     // Content exists but didn't parse — same still-settling-write
+     // situation; leave the file alone and retry rather than discarding an
+     // answer that may simply not be fully flushed yet.
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
    }
    throw std::runtime_error("player decision timed out");
@@ -385,6 +489,65 @@ private:
   std::cout << "Choose action: "; size_t choice=choices.size(); std::cin >> choice;
   if(choice >= choices.size()) throw std::runtime_error("invalid human action index");
   return choices[choice].second;
+ }
+ // Answers a "select between min and max cards" prompt (MSG_SELECT_CARD,
+ // MSG_SELECT_TRIBUTE) by publishing every individual candidate — not the
+ // combinatorial "every N-card combination as one line" menu this project
+ // used to generate — so the client can render them as clickable zones the
+ // player toggles, rather than a text list. request.txt gets a reserved
+ // "#SELECT <min> <max>" first line (a
+ // plain title never starts with '#') so the client knows to switch into
+ // toggle-selection mode; response.txt is a comma-separated list of chosen
+ // candidate indices instead of a single line index.
+ Response choose_multi_menu(const std::string& title, const std::vector<SelectionCandidate>& candidates, uint32_t min, uint32_t max) const {
+  if(decision_directory_) {
+   fs::create_directories(*decision_directory_);
+   const auto request = *decision_directory_ / "request.txt";
+   const auto temporary = *decision_directory_ / "request.tmp";
+   const auto response_file = *decision_directory_ / "response.txt";
+   std::error_code ignored; fs::remove(response_file, ignored);
+   {
+    std::ofstream out(temporary, std::ios::trunc);
+    out << "#SELECT " << min << ' ' << max << '\n' << title << '\n';
+    for(size_t i=0;i<candidates.size();++i) {
+     const auto& c=candidates[i];
+     out << i << '|' << c.label << " [" << image(c.code) << "][" << int(c.controller) << ',' << int(c.location) << ',' << c.sequence << "]\n";
+    }
+   }
+   fs::rename(temporary, request, ignored); if(ignored) throw std::runtime_error("cannot publish player decision request");
+   for(int wait=0;wait<6000;++wait) {
+    std::error_code size_error; const auto size = fs::file_size(response_file, size_error);
+    if(!size_error && size > 0) {
+     std::ifstream in(response_file); std::string line; std::getline(in, line);
+     if(!line.empty()) {
+      std::vector<uint32_t> indices; bool valid=true; size_t cursor=0;
+      while(cursor <= line.size()) {
+       const auto comma=line.find(',', cursor);
+       const auto token=line.substr(cursor, comma==std::string::npos ? std::string::npos : comma-cursor);
+       if(token.empty()) { valid=false; break; }
+       try { indices.push_back(static_cast<uint32_t>(std::stoul(token))); } catch(...) { valid=false; break; }
+       if(comma==std::string::npos) break;
+       cursor=comma+1;
+      }
+      std::sort(indices.begin(), indices.end());
+      const bool unique = std::adjacent_find(indices.begin(), indices.end()) == indices.end();
+      const bool inRange = std::all_of(indices.begin(), indices.end(), [&](uint32_t i){ return i < candidates.size(); });
+      if(valid && unique && inRange && indices.size()>=min && indices.size()<=max) {
+       fs::remove(response_file, ignored); fs::remove(request, ignored);
+       return select_indices(indices);
+      }
+      // A malformed/out-of-window response is treated the same as an
+      // incomplete write below — never consumed, always retried — rather
+      // than failing the duel over what's usually just a UI-side bug that's
+      // safer to give another chance than to crash over.
+     }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+   }
+   throw std::runtime_error("player decision timed out");
+  }
+  std::vector<uint32_t> indices; for(uint32_t i=0;i<min && i<candidates.size();++i) indices.push_back(i);
+  return select_indices(indices);
  }
  Response choose_human_idle(const uint8_t*& p,const uint8_t* end) const {
   const auto player=read<uint8_t>(p,end); std::vector<std::pair<std::string,Response>> choices;
@@ -418,31 +581,13 @@ private:
  static void skip_effects(const uint8_t*& p,const uint8_t* e,uint32_t n){ for(uint32_t i=0;i<n;i++){read<uint32_t>(p,e);read<uint8_t>(p,e);read<uint8_t>(p,e);read<uint32_t>(p,e);read<uint64_t>(p,e);read<uint8_t>(p,e);} }
  static Response response(uint16_t type,uint16_t index){ Response out{}; uint32_t r=uint32_t(type)|(uint32_t(index)<<16); std::memcpy(out.data(),&r,4); return out; }
  static Response raw_response(int32_t r){ Response out{}; std::memcpy(out.data(),&r,4); return out; }
+ static Response raw_response64(uint64_t r){ Response out{}; std::memcpy(out.data(),&r,8); return out; }
+ static uint64_t take_first_n_bits(uint64_t available, uint8_t count){ uint64_t taken=0; for(int bit=0; bit<64 && count>0; ++bit) { const uint64_t mask=uint64_t(1)<<bit; if(available & mask) { taken|=mask; --count; } } return taken; }
  static Response place_response(uint8_t player,uint8_t location,uint8_t sequence){ Response out{}; out[0]=player; out[1]=location; out[2]=sequence; return out; }
  static Response select_indices(const std::vector<uint32_t>& indices){ Response out{}; const auto count=static_cast<uint32_t>(indices.size()); std::memcpy(out.data()+4,&count,4); for(uint32_t i=0;i<count && 8+i*4+4<=out.size();++i) std::memcpy(out.data()+8+i*4,&indices[i],4); return out; }
  static Response select_first(uint32_t count){ std::vector<uint32_t> indices; for(uint32_t i=0;i<count;++i) indices.push_back(i); return select_indices(indices); }
  static Response select_counter_response(const std::vector<uint16_t>& amounts){ Response out{}; for(size_t i=0;i<amounts.size() && i*2+2<=out.size();++i) std::memcpy(out.data()+i*2,&amounts[i],2); return out; }
  static Response select_unselect_response(int32_t action,int32_t index){ Response out{}; std::memcpy(out.data(),&action,4); std::memcpy(out.data()+4,&index,4); return out; }
- static std::vector<std::pair<std::string,Response>> selection_menu(const std::vector<std::string>& labels, uint32_t required, const std::string& verb) {
-  std::vector<std::pair<std::string,Response>> menu;
-  std::vector<uint32_t> selected;
-  auto visit = [&](auto&& self, size_t first) -> void {
-   if(menu.size() >= 96) return;
-   if(selected.size() == required) {
-    std::string label = verb;
-    for(size_t i=0;i<selected.size();++i) { if(i) label += " + "; label += labels[selected[i]]; }
-    menu.emplace_back(std::move(label), select_indices(selected));
-    return;
-   }
-   for(size_t i=first; i<labels.size() && labels.size()-i >= required-selected.size(); ++i) {
-    selected.push_back(static_cast<uint32_t>(i));
-    self(self, i + 1);
-    selected.pop_back();
-   }
-  };
-  visit(visit, 0);
-  return menu;
- }
 };
 
 static void log_message(const uint8_t* data,size_t length) {
@@ -465,7 +610,12 @@ static void log_message(const uint8_t* data,size_t length) {
  }
 }
 
-struct BoardCard { uint32_t code{}; uint8_t position{}; };
+// `attack`/`defense` are the monster's *current* (possibly effect-modified)
+// stats, sentinel -1 when not applicable (spells/traps, empty slots) or not
+// yet queried — see track_monster_stats. Always the true value here, same
+// as `code`; visibility masking for face-down/opponent cards happens only
+// at the write_board_state output boundary, not in this internal tracking.
+struct BoardCard { uint32_t code{}; uint8_t position{}; int32_t attack{-1}; int32_t defense{-1}; };
 // Spell/Trap zone sequence 5 is the classic-format Field Spell Zone; DUEL_MODE_GOAT
 // predates Pendulum/Extra Monster Zones, so no other zone geometry needs representing.
 struct BoardState {
@@ -489,6 +639,15 @@ struct BoardState {
  // wire format; this is the best available context for naming them to the
  // player instead of a bare "Confirm effect".
  std::vector<uint32_t> chain_stack{};
+ // Which player controls the card on top of the chain right now (cleared once
+ // the whole chain resolves), and which player most recently Normal Summoned
+ // — the two pieces of context the AI's reactive-trap timing gate needs
+ // (should_fire_reactive_trap in src/ai/Heuristics.cpp) to tell "the opponent
+ // just did something" apart from "it's still our own uncontested turn".
+ // Scoped to Normal Summons only (MSG_SUMMONING): MSG_SPSUMMONED carries no
+ // payload at all, so Special Summons aren't attributed here in this pass.
+ std::optional<uint8_t> last_chain_player{};
+ std::optional<uint8_t> last_summon_player{};
 };
 struct BoardLocation { uint8_t player{}; uint8_t location{}; uint32_t sequence{}; uint32_t position{}; };
 static BoardLocation read_location(const uint8_t*& p, const uint8_t* end) { return {read<uint8_t>(p,end), read<uint8_t>(p,end), read<uint32_t>(p,end), read<uint32_t>(p,end)}; }
@@ -555,14 +714,82 @@ static void track_board_message(const uint8_t* data, size_t length, BoardState& 
  if(kind == MSG_CHAINING) {
   // field::process(...) case 2 in processor.cpp: code, loc_info, triggering
   // controler/location/sequence, description, chain size — see the write
-  // order at processor.cpp's MSG_CHAINING block.
-  const auto code=read<uint32_t>(p,end); read_location(p,end);
+  // order at processor.cpp's MSG_CHAINING block. loc_info's own `controler`
+  // field is the controller of the card now on top of the chain, which is
+  // exactly what the AI's reactive-trap timing gate needs.
+  const auto code=read<uint32_t>(p,end); const auto loc=read_location(p,end);
   read<uint8_t>(p,end); read<uint8_t>(p,end); read<uint32_t>(p,end); read<uint64_t>(p,end); read<uint32_t>(p,end);
   board.chain_stack.push_back(code);
+  if(loc.player<2) board.last_chain_player=loc.player;
   return;
  }
  if(kind == MSG_CHAIN_SOLVED) { read<uint8_t>(p,end); if(!board.chain_stack.empty()) board.chain_stack.pop_back(); return; }
- if(kind == MSG_CHAIN_END) { board.chain_stack.clear(); return; }
+ if(kind == MSG_CHAIN_END) { board.chain_stack.clear(); board.last_chain_player.reset(); return; }
+ if(kind == MSG_SUMMONING) {
+  // operations.cpp case 12: code, loc_info — loc_info's `controler` is the
+  // summoning player. Special Summons (MSG_SPSUMMONED) carry no payload at
+  // all, so only Normal Summons are attributed here; see the BoardState
+  // field comment for why that's an acceptable scope for this pass.
+  read<uint32_t>(p,end); const auto loc=read_location(p,end);
+  if(loc.player<2) board.last_summon_player=loc.player;
+  return;
+ }
+}
+// Converts this file's own BoardState into goat::ai::ObservationInputs — the
+// plain-data shape goat::ai::build_observation (src/ai/ObservationBuilder.cpp)
+// actually performs the no-cheating masking on. Kept as a trivial field-by-
+// field copy so the masking logic itself lives in, and is unit-tested from,
+// the AI module rather than here.
+static goat::ai::ObservationInputs to_observation_inputs(const BoardState& board) {
+ goat::ai::ObservationInputs inputs;
+ inputs.life=board.life; inputs.hand_count=board.hand; inputs.hand_cards=board.hand_cards;
+ for(uint8_t player=0;player<2;++player) {
+  for(uint8_t i=0;i<5;++i) inputs.monsters[player][i]={board.monsters[player][i].code, board.monsters[player][i].position};
+  for(uint8_t i=0;i<6;++i) inputs.spells[player][i]={board.spells[player][i].code, board.spells[player][i].position};
+ }
+ inputs.deck_count=board.deck_count; inputs.grave_count=board.grave_count;
+ inputs.extra_count=board.extra_count; inputs.banished_count=board.banished_count;
+ inputs.turn_player=board.turn_player; inputs.turn_number=board.turn_number; inputs.phase=board.phase;
+ inputs.chain_stack=board.chain_stack; inputs.last_chain_player=board.last_chain_player; inputs.last_summon_player=board.last_summon_player;
+ return inputs;
+}
+// Queries each player's current (possibly effect-modified) monster ATK/DEF
+// via OCG_DuelQueryLocation, so the UI can show a boosted/reduced stat in a
+// different color from the printed baseline. Purely a human-UI concern —
+// AI decisions already reason about effective power via
+// src/ai/CardEvaluator.cpp using CardDatabase's printed stats — so this is
+// only ever called when a decision-dir (human session) is active.
+static void track_monster_stats(OCG_Duel duel, BoardState& board) {
+ for(uint8_t player=0;player<2;++player) {
+  OCG_QueryInfo info{}; info.flags=QUERY_ATTACK|QUERY_DEFENSE; info.con=player; info.loc=LOCATION_MZONE;
+  uint32_t length=0; auto* raw=static_cast<uint8_t*>(OCG_DuelQueryLocation(duel,&length,&info));
+  if(!raw || length<4) continue;
+  // OCG_DuelQueryLocation prepends a uint32_t total-size header before the
+  // per-slot data (see external/ygopro-core/ocgapi.cpp's OCG_DuelQueryLocation);
+  // list_mzone is always allocated 7 wide (5 main zones + 2 Extra Monster
+  // Zones, per external/ygopro-core/field.h) regardless of GOAT/modern
+  // format, so exactly 7 slot-entries always need parsing even though GOAT
+  // only ever uses the first 5.
+  const uint8_t *p=raw+4, *end=raw+length;
+  for(uint8_t seq=0;seq<7 && p<end;++seq) {
+   const auto first_size=read<uint16_t>(p,end);
+   if(first_size==0) { if(seq<5) { board.monsters[player][seq].attack=-1; board.monsters[player][seq].defense=-1; } continue; }
+   // Two fixed TLV entries follow, in card::get_infos's declaration order:
+   // [u32 QUERY_ATTACK][u32 value] then [u16 size][u32 QUERY_DEFENSE][u32 value].
+   read<uint32_t>(p,end); const auto attack=read<uint32_t>(p,end);
+   read<uint16_t>(p,end); read<uint32_t>(p,end); const auto defense=read<uint32_t>(p,end);
+   // card::get_infos (external/ygopro-core/card.cpp) unconditionally appends
+   // two more entries after whatever fields were actually requested — a
+   // "HACK: to remove once the servers are updated to send this flag"
+   // QUERY_IS_PUBLIC (u16 size=5, u32 id, u8 value) and a trailing
+   // QUERY_END marker (u16 size=4, u32 id, no value) — both always present
+   // regardless of the flags passed in, and must be consumed here to stay
+   // aligned with the next slot.
+   read<uint16_t>(p,end); read<uint32_t>(p,end); read<uint8_t>(p,end); // QUERY_IS_PUBLIC
+   read<uint16_t>(p,end); read<uint32_t>(p,end); // QUERY_END
+   if(seq<5) { board.monsters[player][seq].attack=static_cast<int32_t>(attack); board.monsters[player][seq].defense=static_cast<int32_t>(defense); }
+  }
+ }
 }
 static void write_board_state(const fs::path& directory, const BoardState& board, int human_player) {
  const auto temporary=directory/"state.tmp", output=directory/"state.txt"; std::ofstream out(temporary,std::ios::trunc);
@@ -573,8 +800,14 @@ static void write_board_state(const fs::path& directory, const BoardState& board
  out << "banished=" << board.banished_count[0] << ',' << board.banished_count[1] << '\n';
  out << "turn=" << int(board.turn_player) << ',' << board.turn_number << ',' << board.phase << '\n';
  for(uint8_t player=0;player<2;++player) for(uint8_t sequence=0;sequence<5;++sequence) if(const auto& card=board.monsters[player][sequence]; card.code) {
-  const auto visible_code=(player==1 && (card.position & POS_FACEDOWN)) ? 0u : card.code;
-  out << "monster=" << int(player) << ',' << int(sequence) << ',' << visible_code << ',' << int(card.position) << '\n';
+  const bool hidden=(player==1 && (card.position & POS_FACEDOWN));
+  const auto visible_code=hidden ? 0u : card.code;
+  // Current ATK/DEF (possibly boosted/reduced by an equip/continuous
+  // effect) — masked the same as the code itself for a hidden card, so a
+  // face-down monster's stats are never leaked through this either.
+  const auto visible_attack=hidden ? -1 : card.attack;
+  const auto visible_defense=hidden ? -1 : card.defense;
+  out << "monster=" << int(player) << ',' << int(sequence) << ',' << visible_code << ',' << int(card.position) << ',' << visible_attack << ',' << visible_defense << '\n';
  }
  for(uint8_t player=0;player<2;++player) for(uint8_t sequence=0;sequence<6;++sequence) if(const auto& card=board.spells[player][sequence]; card.code) {
   const auto visible_code=(player==1 && (card.position & POS_FACEDOWN)) ? 0u : card.code;
@@ -597,8 +830,29 @@ int main(int argc,char** argv) try {
   if(!fs::exists(path)) throw std::runtime_error("no local image for card " + std::string(argv[2]));
   std::cout << fs::absolute(path).string() << '\n'; return 0;
  }
- if(argc < 4 || std::string(argv[1]) != "duel") { std::cerr << "usage: goat-sim duel A.ydk B.ydk [--seed N] [--max-turns N]\n"; return 2; }
- uint64_t seed=12345; int max_turns=200; int human_player=-1; bool allow_illegal=false; std::optional<fs::path> decision_directory; for(int i=4;i<argc;i++) { if(std::string(argv[i])=="--seed" && i+1<argc) seed=std::stoull(argv[++i]); else if(std::string(argv[i])=="--max-turns" && i+1<argc) max_turns=std::stoi(argv[++i]); else if(std::string(argv[i])=="--allow-illegal-deck") allow_illegal=true; else if(std::string(argv[i])=="--quiet") g_quiet=true; else if(std::string(argv[i])=="--decision-dir" && i+1<argc) decision_directory=argv[++i]; else if(std::string(argv[i])=="--result-file" && i+1<argc) g_result_file=argv[++i]; else if(std::string(argv[i])=="--human-player" && i+1<argc) { human_player=std::stoi(argv[++i])-1; if(human_player<0 || human_player>1) throw std::runtime_error("--human-player must be 1 or 2"); } }
+ if(argc < 4 || std::string(argv[1]) != "duel") { std::cerr << "usage: goat-sim duel A.ydk B.ydk [--seed N] [--max-turns N] [--agent1 random|goat] [--agent2 random|goat] [--difficulty easy|normal|hard] [--ai-seed N]\n"; return 2; }
+ uint64_t seed=12345; int max_turns=200; int human_player=-1; bool allow_illegal=false; std::optional<fs::path> decision_directory;
+ std::string agent_name[2] = {"goat","goat"}; std::string difficulty_name = "normal"; std::optional<uint64_t> ai_seed;
+ for(int i=4;i<argc;i++) {
+  if(std::string(argv[i])=="--seed" && i+1<argc) seed=std::stoull(argv[++i]);
+  else if(std::string(argv[i])=="--max-turns" && i+1<argc) max_turns=std::stoi(argv[++i]);
+  else if(std::string(argv[i])=="--allow-illegal-deck") allow_illegal=true;
+  else if(std::string(argv[i])=="--quiet") g_quiet=true;
+  else if(std::string(argv[i])=="--decision-dir" && i+1<argc) decision_directory=argv[++i];
+  else if(std::string(argv[i])=="--result-file" && i+1<argc) g_result_file=argv[++i];
+  else if(std::string(argv[i])=="--human-player" && i+1<argc) { human_player=std::stoi(argv[++i])-1; if(human_player<0 || human_player>1) throw std::runtime_error("--human-player must be 1 or 2"); }
+  else if(std::string(argv[i])=="--agent1" && i+1<argc) agent_name[0]=argv[++i];
+  else if(std::string(argv[i])=="--agent2" && i+1<argc) agent_name[1]=argv[++i];
+  else if(std::string(argv[i])=="--difficulty" && i+1<argc) difficulty_name=argv[++i];
+  else if(std::string(argv[i])=="--ai-seed" && i+1<argc) ai_seed=std::stoull(argv[++i]);
+ }
+ // "heuristic-goat" is the exact string data/npcs.json's "agent" field has
+ // used since before this AI module existed — accepted as a synonym for
+ // "goat" so that already-authored NPC data starts mattering without
+ // needing to rewrite npcs.json.
+ for(auto& name : agent_name) { if(name=="heuristic-goat") name="goat"; if(name!="random" && name!="goat") throw std::runtime_error("--agent1/--agent2 must be 'random', 'goat', or 'heuristic-goat'"); }
+ goat::ai::Difficulty difficulty = goat::ai::Difficulty::Normal;
+ if(difficulty_name=="easy") difficulty=goat::ai::Difficulty::Easy; else if(difficulty_name=="hard") difficulty=goat::ai::Difficulty::Hard; else if(difficulty_name!="normal") throw std::runtime_error("--difficulty must be 'easy', 'normal' or 'hard'");
  Context ctx{fs::path("external/CardScripts"), "external/BabelCDB/cards.cdb", "external/BabelCDB/goat-entries.cdb"}; g_database=&ctx.database;
  const auto banlist=goat::Banlist::load("external/LFLists/GOAT.lflist.conf");
  auto a=load_deck(argv[2], ctx.database, banlist, allow_illegal), b=load_deck(argv[3], ctx.database, banlist, allow_illegal);
@@ -628,18 +882,64 @@ int main(int argc,char** argv) try {
  std::cout << "Loaded decks: Player 1=" << OCG_DuelQueryCount(duel,0,LOCATION_DECK) << "+" << OCG_DuelQueryCount(duel,0,LOCATION_EXTRA)
            << " extra, Player 2=" << OCG_DuelQueryCount(duel,1,LOCATION_DECK) << "+" << OCG_DuelQueryCount(duel,1,LOCATION_EXTRA) << " extra\n";
  OCG_StartDuel(duel); RandomAgent agent(human_player, decision_directory); BoardState board; int turns=0;
- for(int calls=0;calls<50000;calls++) { auto status=OCG_DuelProcess(duel); uint32_t bytes=0; bool won=false; int winner=-1, reason=-1; auto* raw=static_cast<uint8_t*>(OCG_DuelGetMessage(duel,&bytes)); const uint8_t *p=raw,*end=raw+bytes; while(p<end){auto n=read<uint32_t>(p,end); if(static_cast<size_t>(end-p)<n) throw std::runtime_error("bad message frame"); track_board_message(p,n,board); log_message(p,n); if(*p==MSG_WIN) { won=true; if(n>=3) { winner=p[1]; reason=p[2]; } } if(*p==MSG_NEW_TURN && ++turns>max_turns) throw std::runtime_error("turn limit reached"); p+=n;}
-  if(decision_directory) {
-   board.hand[0]=OCG_DuelQueryCount(duel,0,LOCATION_HAND); board.hand[1]=OCG_DuelQueryCount(duel,1,LOCATION_HAND);
-   board.deck_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_DECK); board.deck_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_DECK);
-   board.grave_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_GRAVE); board.grave_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_GRAVE);
-   board.extra_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_EXTRA); board.extra_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_EXTRA);
-   board.banished_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_REMOVED); board.banished_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_REMOVED);
-   write_board_state(*decision_directory,board,human_player);
+ // One goat::ai::DuelAgent per non-human seat — the human seat (if any)
+ // keeps using the legacy `agent` menu/file-IPC path above untouched. Both
+ // seats get their own agent for CPU vs CPU; --ai-seed (default: --seed)
+ // plus a per-seat offset keeps the two seats' RNG streams independent
+ // while staying fully deterministic for a given --seed/--ai-seed pair.
+ std::array<std::unique_ptr<goat::ai::DuelAgent>,2> cpu_agents;
+ for(uint8_t seat=0; seat<2; ++seat) {
+  if(static_cast<int>(seat)==human_player) continue;
+  if(agent_name[seat]=="random") cpu_agents[seat]=std::make_unique<goat::ai::RandomAgent>(ctx.database);
+  else {
+   // Picks a deck-specific executor table (Chaos Control, Gearfried, Burn)
+   // when this seat's own deck matches one of those archetypes' signature
+   // cards, falling back to the generic table otherwise — see
+   // src/ai/executors/DeckArchetype.cpp.
+   auto executors = goat::ai::build_executors_for_deck((seat==0 ? a : b).main);
+   cpu_agents[seat]=std::make_unique<goat::ai::GoatAgent>(ctx.database, std::move(executors), difficulty, ai_seed.value_or(seed)+seat);
   }
+ }
+ for(int calls=0;calls<50000;calls++) { auto status=OCG_DuelProcess(duel); uint32_t bytes=0; bool won=false; int winner=-1, reason=-1; auto* raw=static_cast<uint8_t*>(OCG_DuelGetMessage(duel,&bytes)); const uint8_t *p=raw,*end=raw+bytes; while(p<end){auto n=read<uint32_t>(p,end); if(static_cast<size_t>(end-p)<n) throw std::runtime_error("bad message frame"); track_board_message(p,n,board); log_message(p,n); if(*p==MSG_WIN) { won=true; if(n>=3) { winner=p[1]; reason=p[2]; } } if(*p==MSG_NEW_TURN && ++turns>max_turns) throw std::runtime_error("turn limit reached"); p+=n;}
+  // Queried unconditionally (not just when a decision-dir is set): a CPU
+  // seat's goat::ai::DuelObservation needs these regardless of whether the
+  // human file-IPC UI is active.
+  board.hand[0]=OCG_DuelQueryCount(duel,0,LOCATION_HAND); board.hand[1]=OCG_DuelQueryCount(duel,1,LOCATION_HAND);
+  board.deck_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_DECK); board.deck_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_DECK);
+  board.grave_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_GRAVE); board.grave_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_GRAVE);
+  board.extra_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_EXTRA); board.extra_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_EXTRA);
+  board.banished_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_REMOVED); board.banished_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_REMOVED);
+  if(decision_directory) { track_monster_stats(duel,board); write_board_state(*decision_directory,board,human_player); }
   if(won) { if(g_result_file) { std::ofstream out(*g_result_file, std::ios::trunc); out << "winner=" << winner << "\nreason=" << reason << '\n'; } OCG_DestroyDuel(duel); return 0; }
   if(status==OCG_DUEL_STATUS_END) { OCG_DestroyDuel(duel); return 0; }
-  if(status==OCG_DUEL_STATUS_AWAITING) { p=raw; while(p<end){auto n=read<uint32_t>(p,end); if(*p>=MSG_SELECT_BATTLECMD && *p<=MSG_SELECT_UNSELECT_CARD) { try { const uint32_t chainContext=board.chain_stack.empty()?0u:board.chain_stack.back(); auto answer=agent.choose(p,n,chainContext); OCG_DuelSetResponse(duel,answer.data(),answer.size()); } catch(...) { std::cerr << "decision message " << int(*p) << " has " << n << " bytes\n"; throw; } break; } p+=n;} }
+  if(status==OCG_DUEL_STATUS_AWAITING) { p=raw; while(p<end){auto n=read<uint32_t>(p,end); if((*p>=MSG_SELECT_BATTLECMD && *p<=MSG_SELECT_UNSELECT_CARD) || (*p>=MSG_ANNOUNCE_RACE && *p<=MSG_ANNOUNCE_NUMBER)) {
+    try {
+     const auto kind=*p;
+     // MSG_SELECT_COUNTER carries no player byte at all and — in the
+     // pre-existing behavior this is extracted from — is never routed
+     // through a human/CPU distinction, it always auto-resolves the same
+     // way regardless of whose turn it is. Route it through the legacy
+     // agent unconditionally (its counter handling ignores human_player_
+     // entirely) rather than through the per-seat cpu_agents array, which
+     // is deliberately left unpopulated for the human's own seat.
+     const bool is_counter = kind==MSG_SELECT_COUNTER;
+     const uint8_t decision_player = is_counter ? 0 : (n>1 ? p[1] : 0);
+     const bool is_human_decision = is_counter || (human_player>=0 && decision_player==static_cast<uint8_t>(human_player));
+     if(is_human_decision) {
+      const uint32_t chainContext=board.chain_stack.empty()?0u:board.chain_stack.back();
+      auto answer=agent.choose(p,n,chainContext); OCG_DuelSetResponse(duel,answer.data(),answer.size());
+     } else {
+      auto& cpu_agent = cpu_agents[decision_player<2?decision_player:0];
+      if(!cpu_agent) throw std::runtime_error("no CPU agent configured for this seat");
+      auto request = goat::ai::parse_decision_request(kind, p+1, p+n);
+      auto inputs = to_observation_inputs(board); inputs.self_player = decision_player<2?decision_player:0;
+      auto observation = goat::ai::build_observation(inputs);
+      auto answer = cpu_agent->choose(observation, request);
+      OCG_DuelSetResponse(duel, answer.data(), answer.size());
+     }
+    } catch(...) { std::cerr << "decision message " << int(*p) << " has " << n << " bytes\n"; throw; }
+    break;
+   } p+=n;} }
  }
  OCG_DestroyDuel(duel); throw std::runtime_error("processor call limit reached");
 } catch(const std::exception& e) { std::cerr << "goat-sim: " << e.what() << '\n'; return 1; }

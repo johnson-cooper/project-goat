@@ -35,6 +35,11 @@ int int_field_or(const std::string& object, const char* key, int fallback) {
     std::smatch match; if(!std::regex_search(object, match, pattern)) return fallback;
     return std::stoi(match[1].str());
 }
+std::string string_field_or(const std::string& object, const char* key, const std::string& fallback) {
+    const std::regex pattern(std::string("\\\"") + key + "\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
+    std::smatch match; if(!std::regex_search(object, match, pattern)) return fallback;
+    return match[1].str();
+}
 std::vector<uint32_t> card_list(const std::string& object) {
     const auto key = object.find("\"cards\""); if(key == std::string::npos) throw std::runtime_error("pack cards missing");
     const auto begin = object.find('[', key), end = object.find(']', begin);
@@ -66,6 +71,7 @@ Catalog load_catalog(const std::string& npc_filename, const std::string& pack_fi
         npc.difficulty = int_field(object, "difficulty"); npc.deck_path = string_field(object, "deck");
         npc.reward.credits = int_field(object, "credits"); npc.reward.pack_id = string_field(object, "pack");
         npc.tier = int_field_or(object, "tier", 1);
+        npc.agent = string_field_or(object, "agent", "random");
         catalog.npcs.push_back(std::move(npc));
     }
     for(const auto& object : objects(read_all(pack_filename))) {

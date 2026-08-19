@@ -74,6 +74,10 @@ constexpr uint16_t POS_DEFENSE = POS_FACEUP_DEFENSE | POS_FACEDOWN_DEFENSE;
 constexpr uint16_t PHASE_DRAW = 0x01, PHASE_STANDBY = 0x02, PHASE_MAIN1 = 0x04, PHASE_BATTLE_START = 0x08,
                     PHASE_BATTLE_STEP = 0x10, PHASE_DAMAGE = 0x20, PHASE_DAMAGE_CAL = 0x40, PHASE_BATTLE = 0x80,
                     PHASE_MAIN2 = 0x100, PHASE_END = 0x200;
+// Matches ocgapi_constants.h's LOCATION_* — used to correlate a multi-select
+// candidate (LegalAction::location, sent by choose_multi_menu in
+// src/main.cpp) to the on-screen zone it should highlight.
+constexpr uint8_t LOCATION_HAND = 0x02, LOCATION_MZONE = 0x04, LOCATION_SZONE = 0x08;
 }
 using namespace cardbits;
 
@@ -92,6 +96,7 @@ constexpr Color legal         = {120, 196, 150, 255};
 constexpr Color textPrimary   = {232, 238, 240, 255};
 constexpr Color textSecondary = {158, 176, 186, 255};
 constexpr Color danger        = {214, 106, 96, 255};
+constexpr Color buffed        = {104, 168, 232, 255}; // Current ATK/DEF boosted above printed — a stat drop reuses `danger`.
 constexpr Color cardBack      = {46, 40, 92, 255};
 }
 
@@ -134,6 +139,36 @@ std::string describe_card_stats(const goat::CardDefinition& def) {
     const uint32_t level = def.level & 0xffu;
     if (level) line += " \xE2\x80\xA2 Level " + std::to_string(level); // U+2022 BULLET
     return line;
+}
+
+// Same content as describe_card_stats, but ATK/DEF are drawn as separate
+// colored segments: blue when a monster's *current* (effect-modified) value
+// on the field is above its printed baseline, red when below, the normal
+// text color otherwise — including when `currentAttack`/`currentDefense`
+// are -1 (not on the field, e.g. a hand card, so there's nothing to compare
+// against). Manual side-by-side layout since draw_text only supports one
+// color per call; mirrors draw_text's own spacing/baseline math.
+void draw_card_stat_line(const Font& font, const goat::CardDefinition& def, int32_t currentAttack, int32_t currentDefense, const Rect& rect, float fontSize) {
+    if (!(def.type & TYPE_MONSTER) || rect.empty()) return;
+    const float spacing = fontSize / 10.0f;
+    const float y = rect.top + (rect.height() - fontSize) / 2.0f;
+    float x = static_cast<float>(rect.left);
+    auto segment = [&](const std::string& text, Color color) {
+        DrawTextEx(font, text.c_str(), Vector2{x, y}, fontSize, spacing, color);
+        x += MeasureTextEx(font, text.c_str(), fontSize, spacing).x;
+    };
+    auto statColor = [](int32_t current, int32_t base) {
+        if (current < 0) return theme::textPrimary; // Not on the field — nothing to compare against.
+        if (current > base) return theme::buffed;
+        if (current < base) return theme::danger;
+        return theme::textPrimary;
+    };
+    segment("ATK ", theme::textPrimary);
+    segment(std::to_string(currentAttack >= 0 ? currentAttack : def.attack), statColor(currentAttack, def.attack));
+    segment(" / DEF ", theme::textPrimary);
+    segment(std::to_string(currentDefense >= 0 ? currentDefense : def.defense), statColor(currentDefense, def.defense));
+    const uint32_t level = def.level & 0xffu;
+    if (level) segment(" \xE2\x80\xA2 Level " + std::to_string(level), theme::textSecondary);
 }
 
 std::string describe_card_type(const goat::CardDefinition& def) {
@@ -779,9 +814,19 @@ DeckListLayout compute_deck_list_layout(const Rect& client, const UiScale& scale
 // ---------- duel board: pure layout/data structs ----------
 // Ported from src/client/main.cpp's own duel-only structs/layout functions.
 
-struct FieldCard { bool occupied{}; uint32_t code{}; uint8_t position{}; };
+// `attack`/`defense` are the monster's current (possibly effect-modified)
+// stats from state.txt's extended monster= line, sentinel -1 when not
+// applicable (spell/trap zones never populate these) or not yet known.
+struct FieldCard { bool occupied{}; uint32_t code{}; uint8_t position{}; int32_t attack{-1}; int32_t defense{-1}; };
 
-struct LegalAction { std::string label; std::string image; uint32_t code{}; };
+// `controller`/`location`/`sequence` are only ever populated for a
+// multi-select prompt's candidates (see poll_player_duel's "#SELECT"
+// branch) — every other action leaves them at their defaults, unused.
+// LOCATION_MZONE/LOCATION_SZONE/LOCATION_HAND let a multi-select candidate
+// be correlated to the physical zone it's rendered in for click-to-select;
+// anything else (graveyard, banished, deck, extra) has no on-screen zone
+// and falls back to a plain list row.
+struct LegalAction { std::string label; std::string image; uint32_t code{}; uint8_t controller{}; uint8_t location{}; uint32_t sequence{}; };
 
 // Whenever every legal action is a numbered monster-zone placement (or a
 // battle-phase "Attack with X"), those actions can be answered by clicking
@@ -1114,6 +1159,18 @@ struct AppState {
     std::vector<LegalAction> legal_actions;
     ActionLayout action_layout;
     size_t action_page{};
+    // "Select between min and max cards" prompts (choose_multi_menu in
+    // src/main.cpp — request.txt's reserved "#SELECT <min> <max>" first
+    // line) render as click-the-card-on-the-board instead of the normal
+    // legal_actions list; the candidates themselves still live in
+    // legal_actions (each entry's controller/location/sequence identify its
+    // zone), just interpreted differently — see poll_player_duel,
+    // resolve_duel_click, and draw_prompt_panel's multi-select branches.
+    // `multi_select_toggled` always matches legal_actions' length; toggled[i]
+    // true means that candidate is currently selected.
+    bool multi_select_active{};
+    uint32_t multi_select_min{}, multi_select_max{};
+    std::vector<bool> multi_select_toggled;
     bool duel_is_test_mode{};
     double last_submit_time{}; // GetTime()-based click-debounce window (seconds)
     double last_poll_time{};   // GetTime() the file-based IPC was last polled — throttled independently of render framerate, see paint_duel
@@ -1339,7 +1396,11 @@ void deck_action_buttons(AppState& state, const std::array<Rect, 6>& buttons, co
 
 // ---------- duel board: hover/selection resolution ----------
 
-struct DuelHover { uint32_t inspect_code = 0; bool inspect_is_back = false; int hand_index = -1; int player_zone = -1; };
+// `inspect_monster_player`/`inspect_monster_sequence` identify exactly which
+// monster-zone slot is being inspected (when applicable), so the inspector
+// can look up its *current* ATK/DEF alongside the printed stats — a hand
+// card or spell/trap zone never sets these, since only monsters have stats.
+struct DuelHover { uint32_t inspect_code = 0; bool inspect_is_back = false; int hand_index = -1; int player_zone = -1; int inspect_monster_player = -1; int inspect_monster_sequence = -1; };
 
 // Ported directly from src/client/main.cpp's compute_duel_hover.
 DuelHover compute_duel_hover(AppState& state, const DuelLayout& L, int x, int y) {
@@ -1360,7 +1421,7 @@ DuelHover compute_duel_hover(AppState& state, const DuelLayout& L, int x, int y)
             // just as inspectable as a face-up one — only its code being 0
             // (which never happens for our own occupied zones) means unknown.
             const auto& card = state.monsters[0][si];
-            if (card.occupied) { if (card.code == 0) hover.inspect_is_back = true; else hover.inspect_code = card.code; }
+            if (card.occupied) { if (card.code == 0) hover.inspect_is_back = true; else { hover.inspect_code = card.code; hover.inspect_monster_player = 0; hover.inspect_monster_sequence = i; } }
             return hover;
         }
         if (L.player_spells[si].contains(x, y)) {
@@ -1370,7 +1431,7 @@ DuelHover compute_duel_hover(AppState& state, const DuelLayout& L, int x, int y)
         }
         if (L.opponent_monsters[si].contains(x, y)) {
             const auto& card = state.monsters[1][si];
-            if (card.occupied) { if (card.code == 0) hover.inspect_is_back = true; else hover.inspect_code = card.code; }
+            if (card.occupied) { if (card.code == 0) hover.inspect_is_back = true; else { hover.inspect_code = card.code; hover.inspect_monster_player = 1; hover.inspect_monster_sequence = i; } }
             return hover;
         }
         if (L.opponent_spells[si].contains(x, y)) {
@@ -1388,13 +1449,17 @@ DuelHover compute_duel_hover(AppState& state, const DuelLayout& L, int x, int y)
 // mode) selects it; the inspector then shows buttons for just that card's
 // legal actions (Change Position, Activate) instead of a flat list entry.
 // An explicit selection like this always outranks mere hover.
-struct BoardSelection { uint32_t code = 0; const std::vector<size_t>* actions = nullptr; };
+// `monster_sequence` is set alongside `code` whenever the selection is a
+// monster-zone slot (always the player's own — see below), so the inspector
+// can look up its current ATK/DEF; -1 for a spell/trap selection or no
+// selection at all.
+struct BoardSelection { uint32_t code = 0; const std::vector<size_t>* actions = nullptr; int monster_sequence = -1; };
 
 BoardSelection resolve_board_selection(AppState& state) {
     BoardSelection info;
     if (state.selected_monster_zone >= 0 && static_cast<size_t>(state.selected_monster_zone) < 5) {
         const auto& card = state.monsters[0][static_cast<size_t>(state.selected_monster_zone)];
-        if (card.occupied) info.code = card.code;
+        if (card.occupied) { info.code = card.code; info.monster_sequence = state.selected_monster_zone; }
         const auto it = state.action_layout.monster_board_actions.find(state.selected_monster_zone);
         if (it != state.action_layout.monster_board_actions.end()) info.actions = &it->second;
     } else if (state.selected_spell_zone >= 0 && static_cast<size_t>(state.selected_spell_zone) < 6) {
@@ -1556,6 +1621,17 @@ uint64_t random_duel_seed() {
     return (static_cast<uint64_t>(rd()) << 32) ^ static_cast<uint64_t>(rd());
 }
 
+// Maps an NPC's 1-5 difficulty rating (data/npcs.json's "difficulty" field,
+// otherwise only used for the CPU-select screen's subtitle) onto the CPU
+// agent's normal/hard tiers (src/ai/GoatAgent.hpp). Every NPC uses the
+// "heuristic-goat" agent now, and deliberately never maps to "easy" — Easy
+// is currently a full delegate to the old passive RandomAgent baseline
+// (zero heuristics), which is exactly the "very dumb" behavior the roster
+// moved away from; 4-5 gets Hard, everything else gets Normal.
+const char* difficulty_flag_for(int difficulty) {
+    return difficulty >= 4 ? "hard" : "normal";
+}
+
 // Strips the trailing " [image/path.jpg]" the engine appends to a choice
 // label purely so the client can recover the card code (see
 // parse_code_from_image_path) — never meant to be shown.
@@ -1628,6 +1704,12 @@ void start_player_duel(AppState& state, bool test_mode) {
         "--decision-dir", state.session_directory.string(),
         "--result-file", (state.session_directory / "result.txt").string(),
         "--seed", std::to_string(random_duel_seed()), "--quiet",
+        // Honors this NPC's data-driven strength (data/npcs.json's "agent"
+        // field — "random" or "goat", and its "difficulty" 1-5 rating mapped
+        // to an AI difficulty tier); the human seat (player 1) is untouched
+        // by either flag.
+        "--agent2", npc.agent,
+        "--difficulty", difficulty_flag_for(npc.difficulty),
     };
     std::vector<std::string> args = baseArgs;
     if (test_mode) args.push_back("--allow-illegal-deck");
@@ -1649,6 +1731,7 @@ void start_player_duel(AppState& state, bool test_mode) {
     state.turn_player = 0; state.turn_number = 0; state.phase = 0;
     state.legal_actions.clear(); state.action_layout = ActionLayout{}; state.action_page = 0; state.prompt_title.clear();
     state.open_hand_card = -1; state.selected_monster_zone = -1; state.selected_spell_zone = -1;
+    state.multi_select_active = false; state.multi_select_toggled.clear();
     state.last_board_snapshot.clear();
     state.request_txt_seen_missing = true;
     state.last_request_text.clear();
@@ -1707,20 +1790,64 @@ void poll_player_duel(AppState& state) {
             std::istringstream lines(text);
             std::string line;
             std::getline(lines, line);
-            state.prompt_title = line;
             state.legal_actions.clear();
-            while (std::getline(lines, line)) {
-                const auto split = line.find('|');
-                if (split == std::string::npos) continue;
-                const auto raw = line.substr(split + 1);
-                const auto begin = raw.find('['), end = raw.rfind(']');
-                LegalAction action;
-                if (begin != std::string::npos && end != std::string::npos && begin < end) {
-                    action.image = raw.substr(begin + 1, end - begin - 1);
-                    action.code = parse_code_from_image_path(action.image);
+            state.multi_select_active = line.rfind("#SELECT ", 0) == 0;
+            if (state.multi_select_active) {
+                // "#SELECT <min> <max>" header, then the real title on its
+                // own line, then one candidate per line (see choose_multi_menu
+                // in src/main.cpp) — "<label> [<image>][<controller>,<location>,<sequence>]".
+                std::istringstream header(line.substr(8));
+                header >> state.multi_select_min >> state.multi_select_max;
+                std::getline(lines, line);
+                state.prompt_title = line;
+                while (std::getline(lines, line)) {
+                    const auto split = line.find('|');
+                    if (split == std::string::npos) continue;
+                    const auto raw = line.substr(split + 1);
+                    const auto zoneOpen = raw.rfind('['), zoneClose = raw.rfind(']');
+                    if (zoneOpen == std::string::npos || zoneClose == std::string::npos || zoneOpen >= zoneClose) continue;
+                    const auto beforeZone = raw.substr(0, zoneOpen);
+                    const auto imgOpen = beforeZone.rfind('['), imgClose = beforeZone.rfind(']');
+                    LegalAction action;
+                    if (imgOpen != std::string::npos && imgClose != std::string::npos && imgOpen < imgClose) {
+                        action.image = beforeZone.substr(imgOpen + 1, imgClose - imgOpen - 1);
+                        action.code = parse_code_from_image_path(action.image);
+                        action.label = action_caption(beforeZone.substr(0, imgOpen));
+                    } else {
+                        action.label = action_caption(beforeZone);
+                    }
+                    const auto locationField = raw.substr(zoneOpen + 1, zoneClose - zoneOpen - 1);
+                    uint32_t parts[3] = {0, 0, 0}; int partIndex = 0; size_t cursor = 0;
+                    while (cursor <= locationField.size() && partIndex < 3) {
+                        const auto comma = locationField.find(',', cursor);
+                        const auto token = locationField.substr(cursor, comma == std::string::npos ? std::string::npos : comma - cursor);
+                        try { parts[partIndex] = static_cast<uint32_t>(std::stoul(token)); } catch (...) {}
+                        ++partIndex;
+                        if (comma == std::string::npos) break;
+                        cursor = comma + 1;
+                    }
+                    action.controller = static_cast<uint8_t>(parts[0]);
+                    action.location = static_cast<uint8_t>(parts[1]);
+                    action.sequence = parts[2];
+                    state.legal_actions.push_back(std::move(action));
                 }
-                action.label = action_caption(raw);
-                state.legal_actions.push_back(std::move(action));
+                state.multi_select_toggled.assign(state.legal_actions.size(), false);
+                state.action_layout = ActionLayout{};
+            } else {
+                state.prompt_title = line;
+                while (std::getline(lines, line)) {
+                    const auto split = line.find('|');
+                    if (split == std::string::npos) continue;
+                    const auto raw = line.substr(split + 1);
+                    const auto begin = raw.find('['), end = raw.rfind(']');
+                    LegalAction action;
+                    if (begin != std::string::npos && end != std::string::npos && begin < end) {
+                        action.image = raw.substr(begin + 1, end - begin - 1);
+                        action.code = parse_code_from_image_path(action.image);
+                    }
+                    action.label = action_caption(raw);
+                    state.legal_actions.push_back(std::move(action));
+                }
             }
             state.action_page = 0;
         }
@@ -1754,6 +1881,7 @@ void poll_player_duel(AppState& state) {
         goat::process::close_handles(state.player_process);
         state.legal_actions.clear(); state.action_layout = ActionLayout{}; state.prompt_title.clear();
         state.open_hand_card = -1; state.selected_monster_zone = -1; state.selected_spell_zone = -1;
+        state.multi_select_active = false; state.multi_select_toggled.clear();
         return;
     }
     int exit_code = 0;
@@ -1804,7 +1932,8 @@ void poll_board_snapshot(AppState& state) {
         else if (key == "extra" && fields.size() == 2) { state.extra_count[0] = fields[0]; state.extra_count[1] = fields[1]; }
         else if (key == "banished" && fields.size() == 2) { state.banished_count[0] = fields[0]; state.banished_count[1] = fields[1]; }
         else if (key == "turn" && fields.size() == 3) { state.turn_player = static_cast<uint8_t>(fields[0]); state.turn_number = fields[1]; state.phase = static_cast<uint16_t>(fields[2]); }
-        else if (key == "monster" && fields.size() == 4 && fields[0] < 2 && fields[1] < 5) state.monsters[fields[0]][fields[1]] = {true, fields[2], static_cast<uint8_t>(fields[3])};
+        else if (key == "monster" && fields.size() == 6 && fields[0] < 2 && fields[1] < 5)
+            state.monsters[fields[0]][fields[1]] = {true, fields[2], static_cast<uint8_t>(fields[3]), static_cast<int32_t>(fields[4]), static_cast<int32_t>(fields[5])};
         else if (key == "spell" && fields.size() == 4 && fields[0] < 2 && fields[1] < 6) state.spells[fields[0]][fields[1]] = {true, fields[2], static_cast<uint8_t>(fields[3])};
         else if (key == "handcards" && !fields.empty() && fields[0] < 2) state.hand_cards.assign(fields.begin() + 1, fields.end());
     }
@@ -1844,6 +1973,48 @@ void submit_action(AppState& state, size_t action) {
         fs::rename(tempPath, responsePath, renameError);
     }
     state.legal_actions.clear();
+    state.action_layout = ActionLayout{};
+    state.action_page = 0;
+    state.prompt_title.clear();
+    state.open_hand_card = -1; state.selected_monster_zone = -1; state.selected_spell_zone = -1;
+    state.multi_select_active = false;
+    state.multi_select_toggled.clear();
+}
+
+// Submits the toggled subset of a "#SELECT <min> <max>" prompt (see
+// AppState::multi_select_active). Mirrors submit_action's atomic
+// temp-file-then-rename write, but the payload is a comma-separated list of
+// candidate indices (src/main.cpp's choose_multi_menu expects exactly this
+// shape) instead of a single index.
+void submit_multi_selection(AppState& state) {
+    if (!state.multi_select_active) return;
+    const size_t count = std::count(state.multi_select_toggled.begin(), state.multi_select_toggled.end(), true);
+    if (count < state.multi_select_min || count > state.multi_select_max) return;
+    state.last_submit_time = GetTime();
+    const auto responsePath = state.session_directory / "response.txt";
+    const auto tempPath = state.session_directory / "response.tmp";
+    {
+        std::ofstream output(tempPath, std::ios::trunc);
+        bool first = true;
+        for (size_t i = 0; i < state.multi_select_toggled.size(); ++i) {
+            if (!state.multi_select_toggled[i]) continue;
+            if (!first) output << ',';
+            output << i;
+            first = false;
+        }
+        output << '\n';
+    }
+    std::error_code renameError;
+    fs::rename(tempPath, responsePath, renameError);
+    if (renameError) {
+        // See submit_action's comment on the same retry pattern.
+        std::error_code removeError;
+        fs::remove(responsePath, removeError);
+        fs::rename(tempPath, responsePath, renameError);
+    }
+    state.legal_actions.clear();
+    state.multi_select_active = false;
+    state.multi_select_toggled.clear();
     state.action_layout = ActionLayout{};
     state.action_page = 0;
     state.prompt_title.clear();
@@ -2329,13 +2500,26 @@ void paint_cpu_select(AppState& state, const Rect& client, const UiScale& scale,
 
 // ---------- duel board: drawing ----------
 
+// Finds the legal_actions index of the multi-select candidate (see
+// AppState::multi_select_active) occupying the given zone, or -1 if none —
+// used both to decide whether a zone should render toggled and to know which
+// index a click on that zone should toggle.
+int find_multi_select_candidate(const AppState& state, uint8_t controller, uint8_t location, uint32_t sequence) {
+    if (!state.multi_select_active) return -1;
+    for (size_t i = 0; i < state.legal_actions.size(); ++i) {
+        const auto& a = state.legal_actions[i];
+        if (a.controller == controller && a.location == location && a.sequence == sequence) return static_cast<int>(i);
+    }
+    return -1;
+}
+
 // Ported from src/client/main.cpp's draw_card_slot. `empty_label` names the
 // zone kind ("MONSTER"/"SPELL/TRAP"/"FIELD") shown only while unoccupied.
 void draw_card_slot(AppState& state, const Rect& cell, const FieldCard& card, bool is_monster_zone,
-                     const char* empty_label, const UiScale& scale, bool hovered, bool legal_target) {
+                     const char* empty_label, const UiScale& scale, bool hovered, bool legal_target, bool toggled = false) {
     draw_panel(cell, theme::fieldZone, false, {});
-    const Color outline = legal_target ? theme::legal : (hovered ? theme::gold : theme::fieldZoneLine);
-    draw_rect_outline(cell, legal_target || hovered ? 2.0f : 1.0f, outline);
+    const Color outline = toggled ? theme::buffed : (legal_target ? theme::legal : (hovered ? theme::gold : theme::fieldZoneLine));
+    draw_rect_outline(cell, toggled || legal_target || hovered ? 3.0f : 1.0f, outline);
 
     if (!card.occupied) {
         if (empty_label && *empty_label) {
@@ -2363,7 +2547,8 @@ void draw_card_slot(AppState& state, const Rect& cell, const FieldCard& card, bo
             draw_panel(footprint, theme::cardBack, false, {});
         }
         draw_rect_outline(footprint, 1.0f, theme::gold);
-        if (hovered) draw_rect_outline(inset(footprint, -2), 2.0f, theme::gold);
+        if (toggled) draw_rect_outline(inset(footprint, -2), 3.0f, theme::buffed);
+        else if (hovered) draw_rect_outline(inset(footprint, -2), 2.0f, theme::gold);
         return;
     }
 
@@ -2375,7 +2560,8 @@ void draw_card_slot(AppState& state, const Rect& cell, const FieldCard& card, bo
         const auto& def = state.card_database.resolve(card.code);
         draw_text(state.font, def.name + "\n(image unavailable)", footprint, static_cast<float>(scale.points(9)), theme::textSecondary, {HAlign::Center, VAlign::Center, true, false});
     }
-    if (hovered) draw_rect_outline(inset(footprint, -2), 2.0f, theme::gold);
+    if (toggled) draw_rect_outline(inset(footprint, -2), 3.0f, theme::buffed);
+    else if (hovered) draw_rect_outline(inset(footprint, -2), 2.0f, theme::gold);
 }
 
 void draw_pile_zone(const Font& font, const Rect& cell, const char* label, uint32_t count, const UiScale& scale) {
@@ -2444,9 +2630,12 @@ void draw_hand_row(AppState& state, const Rect& area, bool own, const DuelHover&
         } else {
             draw_panel(r, theme::cardBack, true, theme::gold);
         }
-        // Legal (green) = has clickable actions right now; gold = actively
-        // hovered/open — a stronger cue always wins over a weaker one.
-        if (isOpen || isHovered) draw_rect_outline(inset(r, -2), 2.0f, theme::gold);
+        // Toggled (blue, multi-select) beats legal (green) beats
+        // hovered/open (gold) — a stronger cue always wins over a weaker one.
+        const int candidate = own ? find_multi_select_candidate(state, 0, LOCATION_HAND, static_cast<uint32_t>(i)) : -1;
+        const bool toggled = candidate >= 0 && state.multi_select_toggled[static_cast<size_t>(candidate)];
+        if (toggled) draw_rect_outline(inset(r, -2), 3.0f, theme::buffed);
+        else if (isOpen || isHovered) draw_rect_outline(inset(r, -2), 2.0f, theme::gold);
         else if (hasActions) draw_rect_outline(inset(r, -2), 2.0f, theme::legal);
     };
     const int openIdx = own ? state.open_hand_card : -1;
@@ -2492,7 +2681,16 @@ void draw_inspector(AppState& state, const Rect& panel, const DuelHover& hover, 
     Rect nameRect = cut_top(inner, scale.px(24));
     draw_text(state.font, def.name, nameRect, static_cast<float>(scale.points(15)), theme::gold, {HAlign::Left, VAlign::Center, true, false});
     Rect statRect = cut_top(inner, scale.px(20));
-    draw_text(state.font, describe_card_stats(def), statRect, static_cast<float>(scale.points(11)), theme::textPrimary, {HAlign::Left, VAlign::Center, false, false});
+    // A board selection (a click) always wins over mere hover, same
+    // priority `code` itself already follows above.
+    const int statPlayer = selection.monster_sequence >= 0 ? 0 : hover.inspect_monster_player;
+    const int statSequence = selection.monster_sequence >= 0 ? selection.monster_sequence : hover.inspect_monster_sequence;
+    int32_t currentAttack = -1, currentDefense = -1;
+    if (statPlayer >= 0 && statSequence >= 0) {
+        const auto& fieldCard = state.monsters[static_cast<size_t>(statPlayer)][static_cast<size_t>(statSequence)];
+        if (fieldCard.occupied && fieldCard.code == code) { currentAttack = fieldCard.attack; currentDefense = fieldCard.defense; }
+    }
+    draw_card_stat_line(state.font, def, currentAttack, currentDefense, statRect, static_cast<float>(scale.points(11)));
     Rect typeRect = cut_top(inner, scale.px(34));
     draw_text(state.font, describe_card_type(def), typeRect, static_cast<float>(scale.points(10)), theme::textSecondary, {HAlign::Left, VAlign::Top, true, false});
     if (!def.text.empty()) {
@@ -2532,6 +2730,60 @@ DuelWaitState duel_wait_state(const AppState& state) {
     return DuelWaitState::Stuck;
 }
 
+// Multi-select candidates whose location isn't a rendered board/hand zone
+// (graveyard, banished, deck, extra deck) have no on-screen tile to click —
+// these fall back to a checkbox-style row list in the prompt panel, using
+// the same toggle+Confirm model as the on-board click path (never the old
+// combinatorial list).
+std::vector<size_t> off_board_multi_select_candidates(const AppState& state) {
+    std::vector<size_t> result;
+    for (size_t i = 0; i < state.legal_actions.size(); ++i) {
+        const auto loc = state.legal_actions[i].location;
+        if (loc != LOCATION_HAND && loc != LOCATION_MZONE && loc != LOCATION_SZONE) result.push_back(i);
+    }
+    return result;
+}
+
+struct MultiSelectRow { Rect rect; size_t candidate_index{}; };
+struct MultiSelectLayout {
+    Rect title, status;
+    std::vector<MultiSelectRow> rows;
+    Rect prev_button, next_button, pager_label;
+    bool has_pager = false;
+    size_t page_count = 1;
+    Rect confirm_button;
+    bool confirm_enabled = false;
+};
+
+MultiSelectLayout compute_multi_select_layout(const AppState& state, const Rect& panelRect, const UiScale& scale) {
+    MultiSelectLayout out;
+    Rect panel = inset(panelRect, scale.px(8));
+    out.title = cut_top(panel, scale.px(20));
+    out.status = cut_top(panel, scale.px(18));
+    out.confirm_button = cut_bottom(panel, scale.px(28));
+
+    const auto offBoard = off_board_multi_select_candidates(state);
+    out.page_count = std::max<size_t>(1, (offBoard.size() + kPromptRowsPerPage - 1) / kPromptRowsPerPage);
+    out.has_pager = out.page_count > 1;
+    if (out.has_pager) {
+        Rect pager = cut_bottom(panel, scale.px(22));
+        out.prev_button = cut_left(pager, scale.px(64));
+        out.next_button = cut_right(pager, scale.px(64));
+        out.pager_label = pager;
+    }
+    const int rowGap = scale.px(4);
+    const int rowHeight = std::max(1, (panel.height() - rowGap * static_cast<int>(kPromptRowsPerPage - 1)) / static_cast<int>(kPromptRowsPerPage));
+    for (size_t i = 0; i < kPromptRowsPerPage; ++i) {
+        const size_t globalIndex = state.action_page * kPromptRowsPerPage + i;
+        if (globalIndex >= offBoard.size()) break;
+        const int top = panel.top + static_cast<int>(i) * (rowHeight + rowGap);
+        out.rows.push_back({Rect{panel.left, top, panel.right, top + rowHeight}, offBoard[globalIndex]});
+    }
+    const size_t selectedCount = static_cast<size_t>(std::count(state.multi_select_toggled.begin(), state.multi_select_toggled.end(), true));
+    out.confirm_enabled = selectedCount >= state.multi_select_min && selectedCount <= state.multi_select_max;
+    return out;
+}
+
 void draw_prompt_panel(AppState& state, const Rect& panelRect, const UiScale& scale, Vector2 mouse) {
     draw_panel(panelRect, theme::panel, true, theme::panelBorder);
     const int mx = static_cast<int>(mouse.x), my = static_cast<int>(mouse.y);
@@ -2552,6 +2804,29 @@ void draw_prompt_panel(AppState& state, const Rect& panelRect, const UiScale& sc
             color = theme::danger;
         }
         draw_text(state.font, message, inner, static_cast<float>(scale.points(13)), color, {HAlign::Center, VAlign::Center, true, false});
+        return;
+    }
+
+    if (state.multi_select_active) {
+        const auto ms = compute_multi_select_layout(state, panelRect, scale);
+        draw_text(state.font, state.prompt_title + " \xE2\x80\x94 click cards to select them", ms.title, static_cast<float>(scale.points(12)), theme::gold, {HAlign::Left, VAlign::Center, false, true});
+        const size_t selectedCount = static_cast<size_t>(std::count(state.multi_select_toggled.begin(), state.multi_select_toggled.end(), true));
+        const std::string statusText = "Selected " + std::to_string(selectedCount) + " (need " +
+            (state.multi_select_min == state.multi_select_max ? std::to_string(state.multi_select_min) : std::to_string(state.multi_select_min) + "\xE2\x80\x93" + std::to_string(state.multi_select_max)) + ")";
+        draw_text(state.font, statusText, ms.status, static_cast<float>(scale.points(11)), theme::textSecondary, {HAlign::Left, VAlign::Center, false, false});
+        for (const auto& row : ms.rows) {
+            const auto& candidate = state.legal_actions[row.candidate_index];
+            const bool toggled = state.multi_select_toggled[row.candidate_index];
+            const std::string label = (toggled ? "[x] " : "[ ] ") + candidate.label;
+            draw_button(state.font, row.rect, label.c_str(), nullptr, scale, row.rect.contains(mx, my));
+        }
+        if (ms.has_pager) {
+            draw_button(state.font, ms.prev_button, "\xE2\x80\xB9 Prev", nullptr, scale, state.action_page > 0 && ms.prev_button.contains(mx, my));
+            draw_button(state.font, ms.next_button, "Next \xE2\x80\xBA", nullptr, scale, state.action_page + 1 < ms.page_count && ms.next_button.contains(mx, my));
+            const std::string pageText = std::to_string(state.action_page + 1) + " / " + std::to_string(ms.page_count);
+            draw_text(state.font, pageText, ms.pager_label, static_cast<float>(scale.points(11)), theme::textSecondary, {HAlign::Center, VAlign::Center, false, false});
+        }
+        draw_phase_button(state.font, ms.confirm_button, "Confirm", scale, ms.confirm_enabled, ms.confirm_button.contains(mx, my));
         return;
     }
 
@@ -2624,6 +2899,8 @@ void resolve_duel_click(AppState& state, const DuelLayout& L, const UiScale& sca
             state.action_layout = ActionLayout{};
             state.prompt_title.clear();
             state.open_hand_card = -1; state.selected_monster_zone = -1; state.selected_spell_zone = -1;
+            state.multi_select_active = false;
+            state.multi_select_toggled.clear();
             state.waiting_since = 0.0;
             state.status = "Abandoned a duel that stopped responding.";
             state.screen = Screen::Hub;
@@ -2638,6 +2915,46 @@ void resolve_duel_click(AppState& state, const DuelLayout& L, const UiScale& sca
     // screen position in a brand-new, unrelated prompt.
     constexpr double kClickDebounceSeconds = 0.3;
     if (GetTime() - state.last_submit_time < kClickDebounceSeconds) return;
+
+    // A "#SELECT <min> <max>" prompt (see AppState::multi_select_active)
+    // takes over every click while active: it isn't a normal action list, so
+    // none of the branches below (which all assume state.action_layout was
+    // built from verb-prefixed action labels) apply. build_action_layout is
+    // never even run for this prompt shape — see paint_duel.
+    if (state.multi_select_active) {
+        auto toggle = [&](int index) {
+            if (index < 0 || static_cast<size_t>(index) >= state.multi_select_toggled.size()) return;
+            const size_t idx = static_cast<size_t>(index);
+            const auto selectedCount = static_cast<size_t>(std::count(state.multi_select_toggled.begin(), state.multi_select_toggled.end(), true));
+            if (!state.multi_select_toggled[idx] && selectedCount >= state.multi_select_max) return;
+            state.multi_select_toggled[idx] = !state.multi_select_toggled[idx];
+        };
+
+        const auto handRects = layout_hand(L.player_hand, state.hand_cards.size());
+        for (size_t i = 0; i < handRects.size(); ++i) {
+            if (handRects[i].contains(x, y)) { toggle(find_multi_select_candidate(state, 0, LOCATION_HAND, static_cast<uint32_t>(i))); return; }
+        }
+        for (int i = 0; i < 5; ++i) {
+            const size_t si = static_cast<size_t>(i);
+            if (L.player_monsters[si].contains(x, y)) { toggle(find_multi_select_candidate(state, 0, LOCATION_MZONE, static_cast<uint32_t>(i))); return; }
+            if (L.player_spells[si].contains(x, y)) { toggle(find_multi_select_candidate(state, 0, LOCATION_SZONE, static_cast<uint32_t>(i))); return; }
+            if (L.opponent_monsters[si].contains(x, y)) { toggle(find_multi_select_candidate(state, 1, LOCATION_MZONE, static_cast<uint32_t>(i))); return; }
+            if (L.opponent_spells[si].contains(x, y)) { toggle(find_multi_select_candidate(state, 1, LOCATION_SZONE, static_cast<uint32_t>(i))); return; }
+        }
+        if (L.player_spells[5].contains(x, y)) { toggle(find_multi_select_candidate(state, 0, LOCATION_SZONE, 5)); return; }
+        if (L.opponent_spells[5].contains(x, y)) { toggle(find_multi_select_candidate(state, 1, LOCATION_SZONE, 5)); return; }
+
+        const auto ms = compute_multi_select_layout(state, L.prompt_panel, scale);
+        for (const auto& row : ms.rows) {
+            if (row.rect.contains(x, y)) { toggle(static_cast<int>(row.candidate_index)); return; }
+        }
+        if (ms.has_pager) {
+            if (ms.prev_button.contains(x, y) && state.action_page > 0) { --state.action_page; return; }
+            if (ms.next_button.contains(x, y) && state.action_page + 1 < ms.page_count) { ++state.action_page; return; }
+        }
+        if (ms.confirm_enabled && ms.confirm_button.contains(x, y)) submit_multi_selection(state);
+        return;
+    }
 
     // A selected board card's inspector buttons take top priority: they're
     // always visible in a fixed spot, independent of everything else on screen.
@@ -2755,7 +3072,13 @@ void paint_duel(AppState& state, const Rect& client, const UiScale& scale, Vecto
         state.last_poll_time = GetTime();
         poll_player_duel(state);
         poll_board_snapshot(state);
-        if (!state.legal_actions.empty()) state.action_layout = build_action_layout(state);
+        // Multi-select candidates are plain card names, not the verb-prefixed
+        // action labels build_action_layout pattern-matches on ("Summon ",
+        // "Attack with ", …) — running it here would misclassify them
+        // (or, worse, coincidentally match one) and light up zones with the
+        // wrong highlight. Its own parsing branch already left action_layout
+        // blank for this prompt shape; leave it that way.
+        if (!state.multi_select_active && !state.legal_actions.empty()) state.action_layout = build_action_layout(state);
     }
 
     // Tracks how long the "Waiting for the rules engine…" gap has lasted —
@@ -2808,14 +3131,26 @@ void paint_duel(AppState& state, const Rect& client, const UiScale& scale, Vecto
             ? (!spellZoneOccupied && state.action_layout.zone_to_action[si] >= 0)
             : (!state.action_layout.all_zone_placement && spellZoneOccupied && state.action_layout.spell_board_actions.count(i) > 0);
         const bool selectedSpell = state.selected_spell_zone == i;
-        draw_card_slot(state, L.player_monsters[si], state.monsters[0][si], true, "MONSTER", scale, hover.player_zone == i || selectedMonster, legalMonster);
-        draw_card_slot(state, L.player_spells[si], state.spells[0][si], false, "SPELL/TRAP", scale, selectedSpell, legalSpell);
-        draw_card_slot(state, L.opponent_monsters[si], state.monsters[1][si], true, "MONSTER", scale, false, false);
-        draw_card_slot(state, L.opponent_spells[si], state.spells[1][si], false, "SPELL/TRAP", scale, false, false);
+        const int candPlayerMonster = find_multi_select_candidate(state, 0, LOCATION_MZONE, static_cast<uint32_t>(i));
+        const int candPlayerSpell = find_multi_select_candidate(state, 0, LOCATION_SZONE, static_cast<uint32_t>(i));
+        const int candOpponentMonster = find_multi_select_candidate(state, 1, LOCATION_MZONE, static_cast<uint32_t>(i));
+        const int candOpponentSpell = find_multi_select_candidate(state, 1, LOCATION_SZONE, static_cast<uint32_t>(i));
+        const bool toggledPlayerMonster = candPlayerMonster >= 0 && state.multi_select_toggled[static_cast<size_t>(candPlayerMonster)];
+        const bool toggledPlayerSpell = candPlayerSpell >= 0 && state.multi_select_toggled[static_cast<size_t>(candPlayerSpell)];
+        const bool toggledOpponentMonster = candOpponentMonster >= 0 && state.multi_select_toggled[static_cast<size_t>(candOpponentMonster)];
+        const bool toggledOpponentSpell = candOpponentSpell >= 0 && state.multi_select_toggled[static_cast<size_t>(candOpponentSpell)];
+        draw_card_slot(state, L.player_monsters[si], state.monsters[0][si], true, "MONSTER", scale, hover.player_zone == i || selectedMonster, legalMonster, toggledPlayerMonster);
+        draw_card_slot(state, L.player_spells[si], state.spells[0][si], false, "SPELL/TRAP", scale, selectedSpell, legalSpell, toggledPlayerSpell);
+        draw_card_slot(state, L.opponent_monsters[si], state.monsters[1][si], true, "MONSTER", scale, false, false, toggledOpponentMonster);
+        draw_card_slot(state, L.opponent_spells[si], state.spells[1][si], false, "SPELL/TRAP", scale, false, false, toggledOpponentSpell);
     }
+    const int candPlayerField = find_multi_select_candidate(state, 0, LOCATION_SZONE, 5);
+    const int candOpponentField = find_multi_select_candidate(state, 1, LOCATION_SZONE, 5);
     draw_card_slot(state, L.player_spells[5], state.spells[0][5], false, "FIELD", scale, state.selected_spell_zone == 5,
-                   state.spells[0][5].occupied && state.action_layout.spell_board_actions.count(5) > 0);
-    draw_card_slot(state, L.opponent_spells[5], state.spells[1][5], false, "FIELD", scale, false, false);
+                   state.spells[0][5].occupied && state.action_layout.spell_board_actions.count(5) > 0,
+                   candPlayerField >= 0 && state.multi_select_toggled[static_cast<size_t>(candPlayerField)]);
+    draw_card_slot(state, L.opponent_spells[5], state.spells[1][5], false, "FIELD", scale, false, false,
+                   candOpponentField >= 0 && state.multi_select_toggled[static_cast<size_t>(candOpponentField)]);
     draw_pile_zone(state.font, L.player_deck, "DECK", state.deck_count[0], scale);
     draw_pile_zone(state.font, L.player_extra, "EXTRA", state.extra_count[0], scale);
     draw_pile_zone(state.font, L.player_grave, "GRAVE", state.grave_count[0], scale);

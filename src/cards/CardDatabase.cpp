@@ -92,4 +92,13 @@ bool CardDatabase::contains(uint32_t requested_code) {
     try { resolve(requested_code); return true; } catch(const std::runtime_error&) { return false; }
 }
 
+const std::vector<uint32_t>& CardDatabase::all_codes() {
+    if(!all_codes_cache_.empty()) return all_codes_cache_;
+    sqlite3_stmt* stmt{};
+    check(sqlite3_prepare_v2(cards_, "SELECT id FROM datas", -1, &stmt, nullptr), cards_, "prepare all-codes query");
+    while(sqlite3_step(stmt) == SQLITE_ROW) all_codes_cache_.push_back(static_cast<uint32_t>(sqlite3_column_int64(stmt, 0)));
+    sqlite3_finalize(stmt);
+    return all_codes_cache_;
+}
+
 } // namespace goat

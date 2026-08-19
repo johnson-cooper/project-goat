@@ -5,7 +5,7 @@
     "difficulty": 1,
     "tier": 1,
     "deck": "decks/starter/flc3-3rd-aggro.ydk",
-    "agent": "random",
+    "agent": "heuristic-goat",
     "rewards": { "credits": 60, "pack": "goat-starter" }
   },
   {
@@ -14,7 +14,7 @@
     "difficulty": 1,
     "tier": 1,
     "deck": "decks/starter/flc2-3rd-goat.ydk",
-    "agent": "random",
+    "agent": "heuristic-goat",
     "rewards": { "credits": 65, "pack": "goat-starter" }
   },
   {

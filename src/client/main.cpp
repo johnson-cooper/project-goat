@@ -1150,6 +1150,17 @@ uint64_t random_duel_seed() {
     return (static_cast<uint64_t>(rd()) << 32) ^ static_cast<uint64_t>(rd());
 }
 
+// Maps an NPC's 1-5 difficulty rating (data/npcs.json's "difficulty" field,
+// otherwise only used for the CPU-select screen's subtitle) onto the CPU
+// agent's normal/hard tiers (src/ai/GoatAgent.hpp). Every NPC uses the
+// "heuristic-goat" agent now, and deliberately never maps to "easy" — Easy
+// is currently a full delegate to the old passive RandomAgent baseline
+// (zero heuristics), which is exactly the "very dumb" behavior the roster
+// moved away from; 4-5 gets Hard, everything else gets Normal.
+const wchar_t* difficulty_flag_for(int difficulty) {
+    return difficulty >= 4 ? L"hard" : L"normal";
+}
+
 std::wstring run_automatic_duel() {
     const auto root = fs::current_path();
     const auto executable = root / "build" / "goat-sim.exe";
@@ -1207,7 +1218,12 @@ void start_player_duel(AppState& state, bool test_mode) {
     std::wstring command = L"\"" + executable.wstring() + L"\" duel \"" +
         fs::path(state.progression.profile().selected_deck).wstring() + L"\" \"" + fs::path(npc.deck_path).wstring() +
         L"\" --human-player 1 --decision-dir \"" + state.session_directory.wstring() + L"\" --result-file \"" +
-        (state.session_directory / "result.txt").wstring() + L"\" --seed " + std::to_wstring(random_duel_seed()) + L" --quiet";
+        (state.session_directory / "result.txt").wstring() + L"\" --seed " + std::to_wstring(random_duel_seed()) + L" --quiet" +
+        // Honors this NPC's data-driven strength (data/npcs.json's "agent"
+        // field — "random" or "heuristic-goat", and its "difficulty" 1-5
+        // rating mapped to an AI difficulty tier); the human seat is
+        // untouched by either flag.
+        L" --agent2 " + utf8_to_wide(npc.agent) + L" --difficulty " + difficulty_flag_for(npc.difficulty);
     if (test_mode) command += L" --allow-illegal-deck";
     // The engine reports its actual failure reason (an uncaught exception's
     // .what(), e.g. "empty option-selection prompt" or "turn limit reached")

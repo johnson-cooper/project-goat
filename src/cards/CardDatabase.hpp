@@ -36,10 +36,17 @@ public:
     const CardDefinition& resolve(uint32_t requested_code);
     bool contains(uint32_t requested_code);
 
+    // Every card id in the pinned cards.cdb's main `datas` table — the
+    // search space for "declare a card name satisfying condition X" prompts
+    // (MSG_ANNOUNCE_CARD; see src/ai/AnnounceCardSolver.cpp). Queried once
+    // and cached, since it's a full-table scan.
+    const std::vector<uint32_t>& all_codes();
+
 private:
     sqlite3* cards_{};
     sqlite3* goat_{};
     std::unordered_map<uint32_t, CardDefinition> cache_;
+    std::vector<uint32_t> all_codes_cache_;
 
     uint32_t goat_code_for(uint32_t requested_code) const;
     CardDefinition read_card(sqlite3* database, uint32_t requested_code, uint32_t stored_code, bool goat_compatibility) const;

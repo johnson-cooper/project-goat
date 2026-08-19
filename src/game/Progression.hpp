@@ -11,9 +11,13 @@ namespace goat::game {
 struct Reward { int credits{}; std::string pack_id; };
 // `tier` gates when an NPC becomes selectable in normal play: tier 1 is
 // always open, tier N+1 unlocks once every tier-N NPC has 10 recorded wins.
-// Appended after the existing fields (not inserted) so existing positional
-// aggregate-initializers (e.g. in tests) keep compiling unchanged.
-struct Npc { std::string id; std::string name; int difficulty{}; std::string deck_path; Reward reward; int tier{1}; };
+// `agent` names which goat::ai::DuelAgent implementation should play this
+// NPC's seat ("random" or "goat" — see src/ai/); npcs.json has carried this
+// per-NPC since before the AI module existed, but nothing consumed it until
+// the CPU-agent architecture landed. Both fields are appended after the
+// existing ones (not inserted) so existing positional aggregate-initializers
+// (e.g. in tests) keep compiling unchanged.
+struct Npc { std::string id; std::string name; int difficulty{}; std::string deck_path; Reward reward; int tier{1}; std::string agent{"random"}; };
 // `required_tier` gates purchasing a pack in the shop the same way (reward
 // packs from NPC victories bypass this — you can earn a pack before you can
 // buy more of it).
