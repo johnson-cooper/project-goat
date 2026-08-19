@@ -7,8 +7,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $dependencies = @(
     @{ Path = 'external/ygopro-core'; Url = 'https://github.com/edo9300/ygopro-core.git'; Commit = '9a0c558c2d686542f7914a6d529fd7aa57746aed' },
     @{ Path = 'external/CardScripts'; Url = 'https://github.com/ProjectIgnis/CardScripts.git'; Commit = '6d4cfc16326ddb4c1d74f5835d8e43e2c8228007' },
-    @{ Path = 'external/BabelCDB'; Url = 'https://github.com/ProjectIgnis/BabelCDB.git'; Commit = '7f3a3af2520a31122d6ed0db2077d3aba04a97d6' },
-    @{ Path = 'external/LFLists'; Url = 'https://github.com/ProjectIgnis/LFLists.git'; Commit = '931655bd21435ba6b1851f3c66e2d967f06ff4d6' },
+    @{ Path = 'external/BabelCDB'; Url = 'https://github.com/ProjectIgnis/BabelCDB.git'; Commit = '7f3a3af2520a31122d6ed0db2077d3aba04a97d6'; TrackedSubsetIsComplete = $true },
+    @{ Path = 'external/LFLists'; Url = 'https://github.com/ProjectIgnis/LFLists.git'; Commit = '931655bd21435ba6b1851f3c66e2d967f06ff4d6'; TrackedSubsetIsComplete = $true },
     @{ Path = 'external/windbot'; Url = 'https://github.com/ProjectIgnis/windbot.git'; Commit = 'fa0ae767967afc6a820784837f11cd3fabb9c47c' },
     @{ Path = 'external/raylib'; Url = 'https://github.com/raysan5/raylib.git'; Commit = 'dbc56a87da87d973a9c5baa4e7438a9d20121d28' }
 )
@@ -17,22 +17,42 @@ foreach ($dependency in $dependencies) {
     $target = Join-Path $root $dependency.Path
     $gitDir = Join-Path $target '.git'
     if ((Test-Path $target) -and -not (Test-Path $gitDir)) {
-        # BabelCDB, LFLists, and the trimmed CardScripts subset are committed
-        # directly into this project's own git history (see .gitignore's
-        # notes on each) rather than vendored as a separate pinned clone -
-        # on a fresh checkout (any CI run, or anyone who hasn't run this
-        # script before) the directory already exists with the needed files
-        # in it, but with no nested .git of its own. "git -C $target" in
-        # that case doesn't fail outright - it walks up and silently
-        # operates on *this* repo's own .git instead (fetching this
-        # project's own "origin", then failing to check out the
-        # dependency's pinned hash, since that commit obviously isn't in
-        # this repo's object database) - functionally a harmless no-op
-        # since the needed files are already correct, but it prints
-        # confusing "fatal: reference is not a tree" errors that look like
-        # a real failure. Skip it outright instead.
-        Write-Host "Skipping $($dependency.Path) - already present from this repo's own git history, not a separate pinned clone."
-        continue
+        if ($dependency.TrackedSubsetIsComplete) {
+            # BabelCDB and LFLists are committed directly into this project's
+            # own git history in full (see .gitignore's notes) rather than
+            # vendored as a separate pinned clone - on a fresh checkout (any
+            # CI run, or anyone who hasn't run this script before) the
+            # directory already exists with every needed file in it, but
+            # with no nested .git of its own. "git -C $target" in that case
+            # doesn't fail outright - it walks up and silently operates on
+            # *this* repo's own .git instead (fetching this project's own
+            # "origin", then failing to check out the dependency's pinned
+            # hash, since that commit obviously isn't in this repo's object
+            # database) - functionally a harmless no-op since the needed
+            # files are already correct, but it prints confusing "fatal:
+            # reference is not a tree" errors that look like a real failure.
+            # Skip it outright instead.
+            Write-Host "Skipping $($dependency.Path) - already present from this repo's own git history, not a separate pinned clone."
+            continue
+        }
+        # CardScripts is different: its own .gitignore comment is explicit
+        # that the tracked subset is deliberately partial ("this project
+        # only ever loads a script for a card that's actually resolvable
+        # through our GOAT banlist + local card database... fetchable via
+        # this script if the tracked subset ever needs to grow") - it is
+        # NOT a substitute for the full pinned clone the way BabelCDB/
+        # LFLists are. Treating it like them here previously made this
+        # skip fire on every fresh checkout (CI included) and silently
+        # leave CardScripts permanently stuck at whatever subset happened
+        # to be tracked - e.g. a GOAT-legal card whose script never made it
+        # into that subset would load with zero effects and no error at
+        # all (see script_reader in src/main.cpp: a missing script file is
+        # treated identically to "this is a Normal Monster with no script
+        # by design"), reproducing only in a from-scratch checkout like a
+        # CI release build and never on a dev machine that already has a
+        # full clone sitting here from before. Remove the partial checkout
+        # and clone fresh instead of skipping or fetching in place.
+        Remove-Item -Recurse -Force $target
     }
     if (-not (Test-Path $target)) {
         git clone $dependency.Url $target
