@@ -3407,15 +3407,37 @@ void paint_duel(AppState& state, const Rect& client, const UiScale& scale, Vecto
     constexpr double kPollIntervalSeconds = 0.15;
     if (state.player_process.valid() && GetTime() - state.last_poll_time >= kPollIntervalSeconds) {
         state.last_poll_time = GetTime();
-        poll_player_duel(state);
-        poll_board_snapshot(state);
-        // Multi-select candidates are plain card names, not the verb-prefixed
-        // action labels build_action_layout pattern-matches on ("Summon ",
-        // "Attack with ", …) — running it here would misclassify them
-        // (or, worse, coincidentally match one) and light up zones with the
-        // wrong highlight. Its own parsing branch already left action_layout
-        // blank for this prompt shape; leave it that way.
-        if (!state.multi_select_active && !state.legal_actions.empty()) state.action_layout = build_action_layout(state);
+        // main() has no top-level exception handling (unlike goat-sim's own
+        // main(), which wraps everything and reports failures on stderr) —
+        // an uncaught exception anywhere in here would otherwise silently
+        // kill the entire client mid-duel with no diagnostic at all, which
+        // is indistinguishable from "the game just stopped responding" to
+        // whoever's playing. Catching here turns that into the same
+        // graceful, visible abandonment already used for a stuck duel
+        // (below), with the actual exception text surfaced in state.status
+        // instead of lost.
+        try {
+            poll_player_duel(state);
+            poll_board_snapshot(state);
+            // Multi-select candidates are plain card names, not the verb-prefixed
+            // action labels build_action_layout pattern-matches on ("Summon ",
+            // "Attack with ", …) — running it here would misclassify them
+            // (or, worse, coincidentally match one) and light up zones with the
+            // wrong highlight. Its own parsing branch already left action_layout
+            // blank for this prompt shape; leave it that way.
+            if (!state.multi_select_active && !state.legal_actions.empty()) state.action_layout = build_action_layout(state);
+        } catch (const std::exception& error) {
+            if (state.player_process.valid()) goat::process::terminate(state.player_process);
+            state.legal_actions.clear();
+            state.action_layout = ActionLayout{};
+            state.prompt_title.clear();
+            state.open_hand_card = -1; state.selected_monster_zone = -1; state.selected_spell_zone = -1;
+            state.multi_select_active = false;
+            state.multi_select_toggled.clear();
+            state.waiting_since = 0.0;
+            state.status = std::string("Duel error: ") + error.what();
+            state.screen = Screen::Hub;
+        }
     }
 
     // Tracks how long the "Waiting for the rules engine…" gap has lasted —
