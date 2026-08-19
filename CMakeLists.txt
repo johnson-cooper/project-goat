@@ -73,7 +73,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/external/raylib/CMakeLists.txt)
   # when building through CMake.
   target_compile_definitions(raylib PRIVATE SUPPORT_FILEFORMAT_JPG=1)
 
-  add_executable(goat-client-rl src/client_rl/main.cpp src/client_rl/ProcessBridge.cpp src/game/Progression.cpp src/game/Catalog.cpp src/game/DeckBuilder.cpp src/cards/CardDatabase.cpp src/deck/Banlist.cpp)
+  add_executable(goat-client-rl src/client_rl/main.cpp src/client_rl/ProcessBridge.cpp src/client_rl/AudioManager.cpp src/game/Progression.cpp src/game/Catalog.cpp src/game/DeckBuilder.cpp src/cards/CardDatabase.cpp src/deck/Banlist.cpp)
   target_include_directories(goat-client-rl PRIVATE src)
   target_link_libraries(goat-client-rl PRIVATE raylib sqlite3)
 endif()

@@ -145,7 +145,7 @@ jobs:
 
           mkdir -p "$pkg/data" "$pkg/decks" \
                    "$pkg/external/BabelCDB" "$pkg/external/LFLists" "$pkg/external/CardScripts" \
-                   "$pkg/external/card_images" "$pkg/external/packart" "$pkg/external/extra"
+                   "$pkg/external/card_images" "$pkg/external/packart" "$pkg/external/extra" "$pkg/external/sound"
           cp -r data/. "$pkg/data/"
           cp -r decks/. "$pkg/decks/"
           cp -r external/CardScripts/. "$pkg/external/CardScripts/"
@@ -154,6 +154,10 @@ jobs:
           cp -r external/card_images/. "$pkg/external/card_images/"
           cp -r external/packart/. "$pkg/external/packart/"
           cp -r external/extra/. "$pkg/external/extra/"
+          # goat-client-rl's menu/duel music and duel SFX (see AudioManager.cpp) —
+          # read at runtime the same way card_images/packart/extra are, so it's
+          # packaged the same way.
+          cp -r external/sound/. "$pkg/external/sound/"
           cp README.md THIRD_PARTY_NOTICES.md "$pkg/"
 
       # goat-client-rl.exe/goat-sim.exe are dynamically linked against the

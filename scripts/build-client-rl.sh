@@ -37,7 +37,7 @@ if [ ! -f external/raylib/src/libraylib.a ]; then
 fi
 
 g++ -std=c++17 -O0 -Isrc/client_rl -Iexternal/raylib/src -Isrc \
-  src/client_rl/main.cpp src/client_rl/ProcessBridge.cpp \
+  src/client_rl/main.cpp src/client_rl/ProcessBridge.cpp src/client_rl/AudioManager.cpp \
   src/game/Progression.cpp src/game/Catalog.cpp src/game/DeckBuilder.cpp \
   src/cards/CardDatabase.cpp src/deck/Banlist.cpp \
   external/raylib/src/libraylib.a -lsqlite3 -lopengl32 -lgdi32 -lwinmm \

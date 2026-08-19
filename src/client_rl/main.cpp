@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <random>
 #include <sstream>
@@ -31,6 +32,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "AudioManager.hpp"
 #include "Layout.hpp"
 #include "ProcessBridge.hpp"
 #include "cards/CardDatabase.hpp"
@@ -337,7 +339,12 @@ void draw_button(const Font& font, const Rect& r, const char* title, const char*
 bool button(const Font& font, const Rect& r, const char* title, const char* subtitle, const UiScale& scale, Vector2 mouse, bool clicked) {
     const bool hovered = r.contains(static_cast<int>(mouse.x), static_cast<int>(mouse.y));
     draw_button(font, r, title, subtitle, scale, hovered);
-    return hovered && clicked;
+    const bool activated = hovered && clicked;
+    // Routed through a free function (see AudioManager.hpp) rather than
+    // threading an AudioManager through every one of this function's ~36
+    // call sites across every screen, just for one optional click sound.
+    if (activated) goat::audio::play_ui_click();
+    return activated;
 }
 
 // A toggleable filter chip (Collection's Monster/Spell/Trap buttons) — unlike
@@ -382,18 +389,6 @@ void text_field(const Font& font, const Rect& r, std::string& text, bool& active
     std::string shown = text;
     if (active && std::fmod(GetTime(), 1.0) < 0.5) shown += "_";
     draw_text(font, shown, inner, static_cast<float>(scale.points(12)), text.empty() ? theme::textSecondary : theme::textPrimary, {HAlign::Left, VAlign::Center, false, false});
-}
-
-// The persistent brand header shown atop every screen except Title — ported
-// from src/client/main.cpp's draw_app_header. Every screen's own layout
-// reserves `kHeaderHeight` at the top for this (see e.g.
-// compute_collection_layout) and calls this to paint into it.
-void draw_app_header(const Font& font, const Rect& client, const UiScale& scale) {
-    Rect area = inset(client, scale.px(28));
-    Rect header = cut_top(area, scale.px(50));
-    draw_text(font, "PROJECT GOAT", header, static_cast<float>(scale.points(26)), theme::gold, {HAlign::Left, VAlign::Center, false, false});
-    Rect sub = cut_top(area, scale.px(26));
-    draw_text(font, "Project Ignis rules \xE2\x80\xA2 2005 GOAT Format", sub, static_cast<float>(scale.points(12)), theme::textSecondary, {HAlign::Left, VAlign::Center, false, false});
 }
 
 // Letterboxes `tex` into `dest`, preserving its own aspect ratio ("contain"
@@ -1096,11 +1091,18 @@ std::vector<uint32_t> filtered_collection(goat::CardDatabase& database, const st
 
 // ---------- app state / screens ----------
 
-enum class Screen { Title, Hub, Collection, Shop, PackOpening, DeckEditor, DeckList, CpuSelect, Duel };
+enum class Screen { Title, Hub, Collection, Shop, PackOpening, DeckEditor, DeckList, CpuSelect, Duel, Options };
 
+// Menu screens (everything but Duel) all share one continuous music
+// context — see desired_music_for below — but Options is reachable from any
+// of them, so BACK needs to know which one to return to rather than
+// hardcoding Hub. Set right before switching into Screen::Options wherever
+// that happens (draw_app_header, paint_title); read only by paint_options.
 struct AppState {
     Screen screen = Screen::Title;
+    Screen options_return_screen = Screen::Hub;
     Font font{};
+    goat::audio::AudioManager audio;
     TextureCache textures;
     std::string status = "Choose a mode to begin your GOAT Format campaign.";
 
@@ -1209,6 +1211,26 @@ struct AppState {
     uint32_t last_inspected_code{};
     bool last_inspected_is_back{};
 };
+
+// The persistent brand header shown atop every screen except Title and Duel
+// — ported from src/client/main.cpp's draw_app_header. Every screen's own
+// layout reserves `kHeaderHeight` at the top for this (see e.g.
+// compute_collection_layout) and calls this to paint into it. Also owns the
+// OPTIONS button in its top-right corner (see AppState::options_return_screen)
+// so every menu screen gets Options for free instead of each screen wiring
+// its own; Duel never calls this at all, so Options is never exposed mid-duel.
+void draw_app_header(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
+    Rect area = inset(client, scale.px(28));
+    Rect header = cut_top(area, scale.px(50));
+    Rect optionsButton = cut_right(header, scale.px(96));
+    draw_text(state.font, "PROJECT GOAT", header, static_cast<float>(scale.points(26)), theme::gold, {HAlign::Left, VAlign::Center, false, false});
+    Rect sub = cut_top(area, scale.px(26));
+    draw_text(state.font, "Project Ignis rules \xE2\x80\xA2 2005 GOAT Format", sub, static_cast<float>(scale.points(12)), theme::textSecondary, {HAlign::Left, VAlign::Center, false, false});
+    if (button(state.font, inset(optionsButton, 0, scale.px(8)), "OPTIONS", nullptr, scale, mouse, clicked)) {
+        state.options_return_screen = state.screen;
+        state.screen = Screen::Options;
+    }
+}
 
 // Looks up (and caches) the card-art texture for `code`, falling back to the
 // card's alias id — cards resolved through goat-entries.cdb (a GOAT-accurate
@@ -1904,6 +1926,41 @@ void poll_player_duel(AppState& state) {
     }
 }
 
+// Purely presentational, engine-originated audio for state changes that
+// submit_action's own play_action_sfx can't see coming (mainly the CPU
+// opponent's turn) — see the top-level task's board-diff section. Restricted
+// to the *opponent's* zones (index 1) for summon/set specifically, so this
+// can never double up with play_action_sfx's already-fired sound for the
+// local player's own submitted action (index 0 is deliberately left
+// untouched by those two branches). Destroy and LP-damage are symmetric
+// across both players since neither is already covered by any
+// play_action_sfx branch. Only ever called with a snapshot that's already
+// confirmed to differ from the previous one (see poll_board_snapshot's own
+// early-return above), so this never fires from re-polling unchanged state.
+void emit_board_diff_sfx(AppState& state, const std::array<int, 2>& prevLife,
+                          const std::array<std::array<FieldCard, 5>, 2>& prevMonsters,
+                          const std::array<std::array<FieldCard, 6>, 2>& prevSpells) {
+    using goat::audio::SoundEffect;
+    for (int p = 0; p < 2; ++p) {
+        if (state.life[p] < prevLife[p]) { state.audio.playSound(SoundEffect::LifePointDamage); break; }
+    }
+    for (int p = 0; p < 2; ++p) {
+        for (size_t z = 0; z < prevMonsters[p].size(); ++z) {
+            const bool was = prevMonsters[p][z].occupied, is = state.monsters[p][z].occupied;
+            if (was && !is) state.audio.playSound(SoundEffect::Destroy);
+            else if (!was && is && p == 1) {
+                const bool faceDown = (state.monsters[p][z].position & POS_FACEDOWN) != 0;
+                state.audio.playSound(faceDown ? SoundEffect::SetCard : SoundEffect::SummonMonster);
+            }
+        }
+        for (size_t z = 0; z < prevSpells[p].size(); ++z) {
+            const bool was = prevSpells[p][z].occupied, is = state.spells[p][z].occupied;
+            if (was && !is) state.audio.playSound(SoundEffect::Destroy);
+            else if (!was && is && p == 1) state.audio.playSound(SoundEffect::SetCard);
+        }
+    }
+}
+
 void poll_board_snapshot(AppState& state) {
     const auto filename = state.session_directory / "state.txt";
     std::ifstream input(filename); if (!input) return;
@@ -1911,6 +1968,9 @@ void poll_board_snapshot(AppState& state) {
     if (text.empty() || text == state.last_board_snapshot) return;
     state.last_board_snapshot = text;
     state.last_board_change_time = GetTime();
+    const std::array<int, 2> prevLife = state.life;
+    const auto prevMonsters = state.monsters;
+    const auto prevSpells = state.spells;
     for (auto& player : state.monsters) for (auto& cell : player) cell = {};
     for (auto& player : state.spells) for (auto& cell : player) cell = {};
     state.hand_cards.clear();
@@ -1937,12 +1997,34 @@ void poll_board_snapshot(AppState& state) {
         else if (key == "spell" && fields.size() == 4 && fields[0] < 2 && fields[1] < 6) state.spells[fields[0]][fields[1]] = {true, fields[2], static_cast<uint8_t>(fields[3])};
         else if (key == "handcards" && !fields.empty() && fields[0] < 2) state.hand_cards.assign(fields.begin() + 1, fields.end());
     }
+    emit_board_diff_sfx(state, prevLife, prevMonsters, prevSpells);
+}
+
+// Maps a just-submitted LegalAction's raw label (e.g. "Summon Protector of
+// the Throne", "Set spell/trap Sakuretsu Armor") to the matching one-shot
+// SFX — called from submit_action only after its response.txt write has
+// actually gone through, so a click that never resolves into a committed
+// choice never makes a sound (see submit_action's own early-return for an
+// out-of-range index, and the top-level task's "don't play on debounce/
+// failed clicks" requirement). No branch here for a verb this project has no
+// distinct asset for (Activate, Change Position, Attack, ...) — see
+// AudioManager.cpp's sound_path() for exactly which verbs are backed by a
+// file; correctness (staying silent) beats guessing at a close-enough sound.
+void play_action_sfx(AppState& state, const std::string& label) {
+    using goat::audio::SoundEffect;
+    auto starts_with = [&](const char* prefix) { return label.rfind(prefix, 0) == 0; };
+    // Special Summon reuses the normal summon sting — external/sound/fx has
+    // no dedicated special-summon asset, and "a monster arrived" reads as
+    // the same underlying event either way.
+    if (starts_with("Summon ") || starts_with("Special summon ")) state.audio.playSound(SoundEffect::SummonMonster);
+    else if (starts_with("Set monster ") || starts_with("Set spell/trap ")) state.audio.playSound(SoundEffect::SetCard);
 }
 
 void submit_action(AppState& state, size_t action) {
     if (action >= state.legal_actions.size()) return;
     state.last_submit_time = GetTime();
     if (state.legal_actions[action].code) state.last_inspected_code = state.legal_actions[action].code;
+    const std::string actionLabel = state.legal_actions[action].label; // legal_actions gets cleared below
     // The engine (choose_menu in src/main.cpp) polls for this file's
     // existence and reads it the instant it sees it. Writing directly to
     // response.txt left a window where the engine could observe the file
@@ -1972,6 +2054,7 @@ void submit_action(AppState& state, size_t action) {
         fs::remove(responsePath, removeError);
         fs::rename(tempPath, responsePath, renameError);
     }
+    if (!renameError) play_action_sfx(state, actionLabel);
     state.legal_actions.clear();
     state.action_layout = ActionLayout{};
     state.action_page = 0;
@@ -2047,10 +2130,24 @@ void paint_title(AppState& state, const Rect& client, const UiScale& scale, Vect
         state.screen = Screen::Hub;
         state.status = "Choose a duel, visit the shop, or view your collection.";
     }
+
+    // Title doesn't call draw_app_header (it has its own hero layout, no
+    // brand-header band) so its OPTIONS entry point is its own small button
+    // in the same top-right corner draw_app_header would otherwise put one,
+    // built from a separate independent cut of `client` (matching this
+    // function's own cta/textArea split above) rather than disturbing the
+    // hero text layout.
+    Rect cornerArea = inset(client, scale.px(28));
+    Rect cornerRow = cut_top(cornerArea, scale.px(34));
+    Rect optionsButton = cut_right(cornerRow, scale.px(96));
+    if (button(state.font, optionsButton, "OPTIONS", nullptr, scale, mouse, clicked)) {
+        state.options_return_screen = Screen::Title;
+        state.screen = Screen::Options;
+    }
 }
 
 void paint_hub(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
-    draw_app_header(state.font, client, scale);
+    draw_app_header(state, client, scale, mouse, clicked);
     Rect area = inset(client, scale.px(28));
     cut_top(area, scale.px(kHeaderHeight));
     cut_top(area, scale.px(14));
@@ -2108,7 +2205,7 @@ void paint_hub(AppState& state, const Rect& client, const UiScale& scale, Vector
 }
 
 void paint_collection(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
-    draw_app_header(state.font, client, scale);
+    draw_app_header(state, client, scale, mouse, clicked);
     const auto& collection = state.progression.profile().collection;
     const std::vector<uint32_t> visible = filtered_collection(state.card_database, collection, state.search_text,
                                                                 state.collection_filter_monster, state.collection_filter_spell, state.collection_filter_trap);
@@ -2158,7 +2255,7 @@ void paint_collection(AppState& state, const Rect& client, const UiScale& scale,
 }
 
 void paint_shop(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
-    draw_app_header(state.font, client, scale);
+    draw_app_header(state, client, scale, mouse, clicked);
     const auto& packs = state.catalog.packs;
     const auto L = compute_shop_layout(client, scale, packs.size());
     const std::string headerText = "CARD SHOP \xE2\x80\x94 " + std::to_string(state.progression.profile().credits) + " credits";
@@ -2218,6 +2315,7 @@ void paint_shop(AppState& state, const Rect& client, const UiScale& scale, Vecto
                 state.opening_selected = -1;
                 state.status = "Opened " + pack.name + ".";
                 state.screen = Screen::PackOpening;
+                state.audio.playSound(goat::audio::SoundEffect::PackOpen);
             }
         }
     }
@@ -2237,7 +2335,7 @@ constexpr double kRevealIntervalSeconds = 0.5;
 constexpr double kFlipDurationSeconds = 0.2;
 
 void paint_pack_opening(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
-    draw_app_header(state.font, client, scale);
+    draw_app_header(state, client, scale, mouse, clicked);
     const auto L = compute_pack_opening_layout(client, scale, state.opening_cards.size());
     draw_text(state.font, "PACK OPENING", L.header, static_cast<float>(scale.points(20)), theme::gold, {HAlign::Left, VAlign::Center, false, false});
 
@@ -2245,6 +2343,11 @@ void paint_pack_opening(AppState& state, const Rect& client, const UiScale& scal
     if (state.opening_revealed < state.opening_cards.size() && now - state.opening_reveal_start_time >= kRevealIntervalSeconds) {
         ++state.opening_revealed;
         state.opening_reveal_start_time = now;
+        // Only the natural one-at-a-time reveal plays this — the REVEAL ALL
+        // button below jumps opening_revealed straight to the end in one
+        // step, and firing this once per skipped card there would be an
+        // instant burst of overlapping sound, not a reveal.
+        state.audio.playSound(goat::audio::SoundEffect::CardReveal);
     }
 
     const Texture2D cardBack = state.textures.get("external/extra/card_back.jpg");
@@ -2298,7 +2401,7 @@ void paint_pack_opening(AppState& state, const Rect& client, const UiScale& scal
 
 void paint_deck_editor(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
     const bool rightClicked = IsMouseButtonReleased(MOUSE_BUTTON_RIGHT);
-    draw_app_header(state.font, client, scale);
+    draw_app_header(state, client, scale, mouse, clicked);
     const auto& collection = state.progression.profile().collection;
     const std::vector<uint32_t> pool = filtered_collection(state.card_database, collection, state.search_text,
                                                              state.deck_filter_monster, state.deck_filter_spell, state.deck_filter_trap);
@@ -2430,7 +2533,7 @@ void deck_list_panel(AppState& state, const Rect& panel, const ColumnListLayout&
 }
 
 void paint_deck_list(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
-    draw_app_header(state.font, client, scale);
+    draw_app_header(state, client, scale, mouse, clicked);
     const auto mainRows = deck_rows(state.editing_deck.main);
     const auto extraRows = deck_rows(state.editing_deck.extra);
     const auto L = compute_deck_list_layout(client, scale, mainRows.size(), extraRows.size());
@@ -2450,7 +2553,7 @@ void paint_deck_list(AppState& state, const Rect& client, const UiScale& scale, 
 }
 
 void paint_cpu_select(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
-    draw_app_header(state.font, client, scale);
+    draw_app_header(state, client, scale, mouse, clicked);
     const auto L = compute_cpu_select_layout(client, scale, state.catalog.npcs.size());
     state.cpu_select_page = std::min(state.cpu_select_page, L.page_count - 1);
     draw_text(state.font, state.cpu_select_test_mode ? "TEST DUEL \xE2\x80\x94 choose any opponent" : "PLAY CPU \xE2\x80\x94 choose an opponent",
@@ -2496,6 +2599,63 @@ void paint_cpu_select(AppState& state, const Rect& client, const UiScale& scale,
     if (button(state.font, L.buttons[1], pageLabel.c_str(), "Next page", scale, state.cpu_select_page + 1 < L.page_count ? mouse : offscreen, clicked)) ++state.cpu_select_page;
     if (button(state.font, L.buttons[2], "BACK", "Campaign hub", scale, mouse, clicked)) state.screen = Screen::Hub;
     draw_text(state.font, state.status, L.status, static_cast<float>(scale.points(13)), theme::textSecondary, {HAlign::Left, VAlign::Top, true, false});
+}
+
+// ---------- Options ----------
+
+// One [-] value% [+] row, shared by the Music/SFX volume controls below.
+// `apply` receives the already-clamped new 0..1 value and is expected to
+// write it straight back through AudioManager's own setter (which persists
+// it — see AudioManager::setMusicVolume/setSfxVolume), not into a copy.
+void draw_volume_row(const Font& font, const Rect& row, const char* label, float volume, const UiScale& scale,
+                      Vector2 mouse, bool clicked, const std::function<void(float)>& apply) {
+    Rect r = row;
+    Rect labelRect = cut_left(r, scale.px(240));
+    draw_text(font, label, labelRect, static_cast<float>(scale.points(13)), theme::textPrimary, {HAlign::Left, VAlign::Center, false, false});
+
+    Rect plusRect = cut_right(r, scale.px(40));
+    cut_right(r, scale.px(6));
+    Rect valueRect = cut_right(r, scale.px(64));
+    cut_right(r, scale.px(6));
+    Rect minusRect = cut_right(r, scale.px(40));
+
+    const std::string pct = std::to_string(static_cast<int>(std::lround(volume * 100.0f))) + "%";
+    draw_text(font, pct, valueRect, static_cast<float>(scale.points(13)), theme::gold, {HAlign::Center, VAlign::Center, false, false});
+    // 5% steps (the top-level task's own suggested increment) — clamped so
+    // repeated clicks at either end just hold at 0%/100% instead of erroring.
+    if (button(font, minusRect, "-", nullptr, scale, mouse, clicked)) apply(std::clamp(volume - 0.05f, 0.0f, 1.0f));
+    if (button(font, plusRect, "+", nullptr, scale, mouse, clicked)) apply(std::clamp(volume + 0.05f, 0.0f, 1.0f));
+}
+
+// Reachable from every menu screen via draw_app_header's OPTIONS button (or
+// Title's own copy of it) — never from Duel, which doesn't call
+// draw_app_header at all, so this is never exposed mid-duel (see the
+// top-level task's own note that Options during a duel needs either a proper
+// overlay or to stay unexposed; this ships the latter). BACK returns to
+// whichever screen actually opened it (AppState::options_return_screen)
+// rather than hardcoding Hub, since Options has more than one entry point.
+void paint_options(AppState& state, const Rect& client, const UiScale& scale, Vector2 mouse, bool clicked) {
+    Rect area = inset(client, scale.px(28));
+    Rect header = cut_top(area, scale.px(50));
+    draw_text(state.font, "OPTIONS", header, static_cast<float>(scale.points(26)), theme::gold, {HAlign::Left, VAlign::Center, false, false});
+    cut_top(area, scale.px(20));
+
+    Rect panel = centered(area, std::min(area.width(), scale.px(560)), scale.px(220));
+    draw_panel(panel, theme::panel, true, theme::panelBorder);
+    Rect inner = inset(panel, scale.px(24));
+
+    Rect musicRow = cut_top(inner, scale.px(44));
+    draw_volume_row(state.font, musicRow, "MUSIC VOLUME", state.audio.musicVolume(), scale, mouse, clicked,
+                     [&state](float v) { state.audio.setMusicVolume(v); });
+    cut_top(inner, scale.px(18));
+    Rect sfxRow = cut_top(inner, scale.px(44));
+    draw_volume_row(state.font, sfxRow, "SOUND EFFECTS VOLUME", state.audio.sfxVolume(), scale, mouse, clicked,
+                     [&state](float v) { state.audio.setSfxVolume(v); });
+
+    cut_top(inner, scale.px(30));
+    Rect backRow = cut_top(inner, scale.px(48));
+    Rect backButton = centered(backRow, scale.px(180), scale.px(44));
+    if (button(state.font, backButton, "BACK", nullptr, scale, mouse, clicked)) state.screen = state.options_return_screen;
 }
 
 // ---------- duel board: drawing ----------
@@ -3169,6 +3329,23 @@ void paint_duel(AppState& state, const Rect& client, const UiScale& scale, Vecto
     draw_hand_popup(state, L, scale, mouse);
 }
 
+// Centralizes the screen -> music mapping in one place instead of scattering
+// "if state.screen == X, play Y" checks through paint functions (which run
+// every frame and would restart the track on every one of them). Every
+// campaign/menu screen — Title, Hub, Collection, Shop, PackOpening,
+// DeckEditor, DeckList, CpuSelect, Options — shares one continuous
+// MusicTrack::Menu context; only Duel gets its own track. Called once per
+// frame from main() via state.audio.requestMusic(...), which is itself a
+// no-op when the requested track is already playing/targeted — see
+// AudioManager::requestMusic — so switching between menu screens never
+// restarts the menu track.
+goat::audio::MusicTrack desired_music_for(Screen screen) {
+    switch (screen) {
+        case Screen::Duel: return goat::audio::MusicTrack::Duel;
+        default: return goat::audio::MusicTrack::Menu;
+    }
+}
+
 // Every data/asset path in this file (card art, card databases, the title
 // background, saved profiles) is relative to the repo root, which is only
 // the current directory when launched exactly as `./build/goat-client-rl`
@@ -3203,6 +3380,16 @@ int main() {
     AppState state;
     state.font = GetFontDefault();
 
+    // Audio device init/shutdown happens exactly once here, not per screen
+    // change (see AudioManager::initialize's own doc-comment) — every SFX/
+    // music file is loaded once up front too, so a missing optional file is
+    // discovered (and logged) now rather than stalling a screen transition
+    // later. set_ui_click_source wires the shared button() widget's click
+    // sound to this one AudioManager instance without threading it through
+    // every button() call site.
+    state.audio.initialize();
+    goat::audio::set_ui_click_source(&state.audio);
+
     while (!WindowShouldClose()) {
         const int width = GetScreenWidth();
         const int height = GetScreenHeight();
@@ -3211,6 +3398,15 @@ int main() {
         const UiScale scale = compute_scale(width, height, static_cast<int>(96.0f * dpiScale.y));
         const Vector2 mouse = GetMousePosition();
         const bool clicked = IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
+
+        // Music state belongs here, in the application layer, not in any
+        // paint_* function (which runs every frame and would restart the
+        // track) — see desired_music_for's own doc-comment. requestMusic is
+        // idempotent when the target hasn't changed, and update() advances
+        // both music-stream buffering and any in-progress fade every frame
+        // regardless of which screen is active.
+        state.audio.requestMusic(desired_music_for(state.screen));
+        state.audio.update();
 
         BeginDrawing();
         ClearBackground(theme::background);
@@ -3224,6 +3420,7 @@ int main() {
             case Screen::DeckList: paint_deck_list(state, client, scale, mouse, clicked); break;
             case Screen::CpuSelect: paint_cpu_select(state, client, scale, mouse, clicked); break;
             case Screen::Duel: paint_duel(state, client, scale, mouse, clicked); break;
+            case Screen::Options: paint_options(state, client, scale, mouse, clicked); break;
         }
         EndDrawing();
     }
@@ -3234,6 +3431,10 @@ int main() {
     // process) already closes the process there instead.
     if (state.player_process.valid()) goat::process::terminate(state.player_process);
 
+    // Sounds/music must be unloaded and the audio device closed before the
+    // window does — see AudioManager::shutdown's own doc-comment; it's safe
+    // to call again from AppState's destructor afterward (idempotent).
+    state.audio.shutdown();
     state.textures.unload_all();
     CloseWindow();
     return 0;
