@@ -282,7 +282,7 @@ public:
    if(min > choices) throw std::runtime_error("invalid tribute-selection prompt");
    std::vector<SelectionCandidate> candidates;
    candidates.reserve(choices);
-   for(uint32_t i=0;i<choices;++i) { const auto code=read<uint32_t>(p,end); const auto controller=read<uint8_t>(p,end); const auto location=read<uint8_t>(p,end); const auto sequence=read<uint32_t>(p,end); read<uint8_t>(p,end); candidates.push_back({name(code), code, controller, location, sequence}); }
+   for(uint32_t i=0;i<choices;++i) { const auto code=read<uint32_t>(p,end); const auto controller=read<uint8_t>(p,end); const auto location=read<uint8_t>(p,end); const auto sequence=read<uint32_t>(p,end); read<uint8_t>(p,end); candidates.push_back({name(code), code, out_index(controller), location, sequence}); }
    if(decision_directory_ && player == human_player_) {
     return choose_multi_menu(min == max ? (min == 1 ? "Choose a tribute" : "Choose tributes") : "Choose tributes", candidates, min, max);
    }
@@ -294,7 +294,7 @@ public:
    if(min > choices) throw std::runtime_error("invalid card-selection prompt");
    std::vector<SelectionCandidate> candidates;
    candidates.reserve(choices);
-   for(uint32_t i=0;i<choices;++i) { const auto code=read<uint32_t>(p,end); const auto controller=read<uint8_t>(p,end); const auto location=read<uint8_t>(p,end); const auto sequence=read<uint32_t>(p,end); read<uint32_t>(p,end); candidates.push_back({name(code), code, controller, location, sequence}); }
+   for(uint32_t i=0;i<choices;++i) { const auto code=read<uint32_t>(p,end); const auto controller=read<uint8_t>(p,end); const auto location=read<uint8_t>(p,end); const auto sequence=read<uint32_t>(p,end); read<uint32_t>(p,end); candidates.push_back({name(code), code, out_index(controller), location, sequence}); }
    if(decision_directory_ && player == human_player_) {
     return choose_multi_menu(min == max ? (min == 1 ? "Choose a card" : "Choose cards") : "Choose cards", candidates, min, max);
    }
@@ -432,6 +432,19 @@ public:
 private:
  int human_player_;
  std::optional<fs::path> decision_directory_;
+ // Translates a raw OCG seat (0 or 1, whichever the engine's own wire
+ // protocol reports) into client-relative "0 = you, 1 = opponent" — the
+ // same translation write_board_state's own out_index applies to every
+ // monster=/spell= line. Needed here too: with the per-duel coin flip
+ // (see main()'s seat_of_a/seat_of_b) the human isn't always raw seat 0,
+ // but every SelectionCandidate below still gets rendered against
+ // client-relative board state (state.monsters[0] is always "you" there).
+ // Left untranslated, a genuine opponent-side candidate on a duel where
+ // the human landed on raw seat 1 reported itself as controller=0 — the
+ // client's own "mine" — matching it against the human's own (often
+ // differently-occupied, sometimes empty) zone instead of the actual
+ // opponent zone it named, with no indication anything was wrong.
+ uint8_t out_index(uint8_t raw_seat) const { return (human_player_>=0 && raw_seat==static_cast<uint8_t>(human_player_)) ? 0u : 1u; }
  // Always embeds a path whose filename stem is exactly `code` (the board's
  // real identity), regardless of whether that file exists — the bracketed
  // text is never shown to the user (action_caption strips it before display),
