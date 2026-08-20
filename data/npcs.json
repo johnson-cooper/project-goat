@@ -6,7 +6,10 @@
     "tier": 1,
     "deck": "decks/starter/flc3-3rd-aggro.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 60, "pack": "goat-starter" }
+    "rewards": {
+      "credits": 60,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc2_3rd_goat",
@@ -15,7 +18,10 @@
     "tier": 1,
     "deck": "decks/starter/flc2-3rd-goat.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 65, "pack": "goat-starter" }
+    "rewards": {
+      "credits": 65,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc3_3rd_goat",
@@ -24,7 +30,10 @@
     "tier": 1,
     "deck": "decks/starter/flc3-3rd-goat.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 70, "pack": "goat-starter" }
+    "rewards": {
+      "credits": 70,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc1_3rd_chaos_con",
@@ -33,7 +42,10 @@
     "tier": 1,
     "deck": "decks/starter/flc1-3rd-chaos-con.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 75, "pack": "goat-starter" }
+    "rewards": {
+      "credits": 75,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc2_3rd_chaos_con",
@@ -42,7 +54,10 @@
     "tier": 1,
     "deck": "decks/starter/flc2-3rd-chaos-con.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 80, "pack": "goat-starter" }
+    "rewards": {
+      "credits": 80,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc1_2nd_gearfried",
@@ -51,7 +66,10 @@
     "tier": 2,
     "deck": "decks/starter/flc1-2nd-gearfried.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 120, "pack": "goat-classics" }
+    "rewards": {
+      "credits": 120,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc2_2nd_goat",
@@ -60,7 +78,10 @@
     "tier": 2,
     "deck": "decks/starter/flc2-2nd-goat.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 130, "pack": "goat-classics" }
+    "rewards": {
+      "credits": 130,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc3_2nd_chaos_con",
@@ -69,7 +90,10 @@
     "tier": 2,
     "deck": "decks/starter/flc3-2nd-chaos-con.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 140, "pack": "goat-classics" }
+    "rewards": {
+      "credits": 140,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "tide_master",
@@ -78,7 +102,10 @@
     "tier": 2,
     "deck": "decks/starter/water-fusion.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 150, "pack": "goat-classics" }
+    "rewards": {
+      "credits": 150,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc2_1st_chaos_turbo",
@@ -87,7 +114,10 @@
     "tier": 3,
     "deck": "decks/starter/flc2-1st-chaos-tur.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 180, "pack": "goat-classics" }
+    "rewards": {
+      "credits": 180,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc1_1st_goat",
@@ -96,7 +126,10 @@
     "tier": 3,
     "deck": "decks/starter/flc1-1st-goat.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 200, "pack": "goat-classics" }
+    "rewards": {
+      "credits": 200,
+      "pack": "vault-of-the-pharaoh"
+    }
   },
   {
     "id": "flc3_1st_burn",
@@ -105,6 +138,813 @@
     "tier": 3,
     "deck": "decks/starter/flc3-1st-burn.ydk",
     "agent": "heuristic-goat",
-    "rewards": { "credits": 220, "pack": "goat-classics" }
+    "rewards": {
+      "credits": 220,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_anti_meta_stun",
+    "name": "Anti-Meta Stun Duelist",
+    "difficulty": 3,
+    "tier": 3,
+    "deck": "decks/starter/Anti-Meta Stun.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 180,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_archfiend",
+    "name": "Archfiend Duelist",
+    "difficulty": 3,
+    "tier": 3,
+    "deck": "decks/starter/Archfiend.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 190,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_bazoo_burn",
+    "name": "Bazoo Burn Duelist",
+    "difficulty": 3,
+    "tier": 3,
+    "deck": "decks/starter/Bazoo Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 200,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_bazoo_return",
+    "name": "Bazoo Return Duelist",
+    "difficulty": 3,
+    "tier": 3,
+    "deck": "decks/starter/Bazoo Return.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 180,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_ben_kei_otk",
+    "name": "Ben Kei OTK Duelist",
+    "difficulty": 3,
+    "tier": 3,
+    "deck": "decks/starter/Ben Kei OTK.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 190,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_blue_eyes",
+    "name": "Blue-Eyes Duelist",
+    "difficulty": 3,
+    "tier": 3,
+    "deck": "decks/starter/Blue-Eyes.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 200,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_canceller_stun",
+    "name": "Canceller Stun Duelist",
+    "difficulty": 3,
+    "tier": 3,
+    "deck": "decks/starter/Canceller Stun.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 180,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_cat_burn",
+    "name": "Cat Burn Duelist",
+    "difficulty": 3,
+    "tier": 3,
+    "deck": "decks/starter/Cat Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 190,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_cat_control",
+    "name": "Cat Control Duelist",
+    "difficulty": 3,
+    "tier": 3,
+    "deck": "decks/starter/Cat Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 200,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_cat_otk",
+    "name": "Cat OTK Duelist",
+    "difficulty": 3,
+    "tier": 4,
+    "deck": "decks/starter/Cat OTK.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 235,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_chaos_control",
+    "name": "Chaos Control Duelist",
+    "difficulty": 3,
+    "tier": 4,
+    "deck": "decks/starter/Chaos Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 245,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_chaos_fairy",
+    "name": "Chaos Fairy Duelist",
+    "difficulty": 3,
+    "tier": 4,
+    "deck": "decks/starter/Chaos Fairy.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 255,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_chaos_monarch",
+    "name": "Chaos Monarch Duelist",
+    "difficulty": 3,
+    "tier": 4,
+    "deck": "decks/starter/Chaos Monarch.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 235,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_chaos_recruiter",
+    "name": "Chaos Recruiter Duelist",
+    "difficulty": 3,
+    "tier": 4,
+    "deck": "decks/starter/Chaos Recruiter.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 245,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_chaos_return",
+    "name": "Chaos Return Duelist",
+    "difficulty": 3,
+    "tier": 4,
+    "deck": "decks/starter/Chaos Return.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 255,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_chaos_turbo",
+    "name": "Chaos Turbo Duelist",
+    "difficulty": 3,
+    "tier": 4,
+    "deck": "decks/starter/Chaos Turbo.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 235,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_chaos_warrior",
+    "name": "Chaos Warrior Duelist",
+    "difficulty": 3,
+    "tier": 4,
+    "deck": "decks/starter/Chaos Warrior.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 245,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_chaos_warrior_turbo",
+    "name": "Chaos Warrior Turbo Duelist",
+    "difficulty": 4,
+    "tier": 5,
+    "deck": "decks/starter/Chaos Warrior Turbo.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 310,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_chaos_zombie",
+    "name": "Chaos Zombie Duelist",
+    "difficulty": 4,
+    "tier": 5,
+    "deck": "decks/starter/Chaos Zombie.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 290,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_clown_control",
+    "name": "Clown Control Duelist",
+    "difficulty": 4,
+    "tier": 5,
+    "deck": "decks/starter/Clown Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 300,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_crane_turbo",
+    "name": "Crane Turbo Duelist",
+    "difficulty": 4,
+    "tier": 5,
+    "deck": "decks/starter/Crane Turbo.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 310,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_dimension_fusion_turbo",
+    "name": "Dimension Fusion Turbo Duelist",
+    "difficulty": 4,
+    "tier": 5,
+    "deck": "decks/starter/Dimension Fusion Turbo.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 290,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_drain_beat",
+    "name": "Drain Beat Duelist",
+    "difficulty": 4,
+    "tier": 5,
+    "deck": "decks/starter/Drain Beat.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 300,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_drain_burn",
+    "name": "Drain Burn Duelist",
+    "difficulty": 4,
+    "tier": 5,
+    "deck": "decks/starter/Drain Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 310,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_earth_beat",
+    "name": "Earth Beat Duelist",
+    "difficulty": 4,
+    "tier": 5,
+    "deck": "decks/starter/Earth Beat.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 290,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_economics_ftk",
+    "name": "Economics FTK Duelist",
+    "difficulty": 4,
+    "tier": 5,
+    "deck": "decks/starter/Economics FTK.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 300,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_emissary_beat",
+    "name": "Emissary Beat Duelist",
+    "difficulty": 4,
+    "tier": 6,
+    "deck": "decks/starter/Emissary Beat.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 365,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_empty_jar",
+    "name": "Empty Jar Duelist",
+    "difficulty": 4,
+    "tier": 6,
+    "deck": "decks/starter/Empty Jar.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 345,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_exodia",
+    "name": "Exodia Duelist",
+    "difficulty": 4,
+    "tier": 6,
+    "deck": "decks/starter/Exodia.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 355,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_flip_burn",
+    "name": "Flip Burn Duelist",
+    "difficulty": 4,
+    "tier": 6,
+    "deck": "decks/starter/Flip Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 365,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_flip_control",
+    "name": "Flip Control Duelist",
+    "difficulty": 4,
+    "tier": 6,
+    "deck": "decks/starter/Flip Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 345,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_flip_warrior",
+    "name": "Flip Warrior Duelist",
+    "difficulty": 4,
+    "tier": 6,
+    "deck": "decks/starter/Flip Warrior.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 355,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_gearfried",
+    "name": "Gearfried Duelist",
+    "difficulty": 4,
+    "tier": 6,
+    "deck": "decks/starter/Gearfried.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 365,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_goat_burn",
+    "name": "Goat Burn Duelist",
+    "difficulty": 4,
+    "tier": 6,
+    "deck": "decks/starter/Goat Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 345,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_goat_control",
+    "name": "Goat Control Duelist",
+    "difficulty": 4,
+    "tier": 7,
+    "deck": "decks/starter/Goat Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 410,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_goblin_control",
+    "name": "Goblin Control Duelist",
+    "difficulty": 4,
+    "tier": 7,
+    "deck": "decks/starter/Goblin Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 420,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_gravekeeper",
+    "name": "Gravekeeper Duelist",
+    "difficulty": 4,
+    "tier": 7,
+    "deck": "decks/starter/Gravekeeper.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 400,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_gravekeeper_burn",
+    "name": "Gravekeeper Burn Duelist",
+    "difficulty": 4,
+    "tier": 7,
+    "deck": "decks/starter/Gravekeeper Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 410,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_heavy_slump",
+    "name": "Heavy Slump Duelist",
+    "difficulty": 4,
+    "tier": 7,
+    "deck": "decks/starter/Heavy Slump.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 420,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_horus_control",
+    "name": "Horus Control Duelist",
+    "difficulty": 4,
+    "tier": 7,
+    "deck": "decks/starter/Horus Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 400,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_jar_burn",
+    "name": "Jar Burn Duelist",
+    "difficulty": 4,
+    "tier": 7,
+    "deck": "decks/starter/Jar Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 410,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_jar_turbo",
+    "name": "Jar Turbo Duelist",
+    "difficulty": 4,
+    "tier": 7,
+    "deck": "decks/starter/Jar Turbo.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 420,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_last_turn",
+    "name": "Last Turn Duelist",
+    "difficulty": 5,
+    "tier": 8,
+    "deck": "decks/starter/Last Turn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 455,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_library_ftk",
+    "name": "Library FTK Duelist",
+    "difficulty": 5,
+    "tier": 8,
+    "deck": "decks/starter/Library FTK.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 465,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_mataza_rush",
+    "name": "Mataza Rush Duelist",
+    "difficulty": 5,
+    "tier": 8,
+    "deck": "decks/starter/Mataza Rush.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 475,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_monarch",
+    "name": "Monarch Duelist",
+    "difficulty": 5,
+    "tier": 8,
+    "deck": "decks/starter/Monarch.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 455,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_other",
+    "name": "Other Duelist",
+    "difficulty": 5,
+    "tier": 8,
+    "deck": "decks/starter/Other.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 465,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_pacman",
+    "name": "PACMAN Duelist",
+    "difficulty": 5,
+    "tier": 8,
+    "deck": "decks/starter/PACMAN.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 475,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_panda_burn",
+    "name": "Panda Burn Duelist",
+    "difficulty": 5,
+    "tier": 8,
+    "deck": "decks/starter/Panda Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 455,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_reasoning_gate_turbo",
+    "name": "Reasoning Gate Turbo Duelist",
+    "difficulty": 5,
+    "tier": 8,
+    "deck": "decks/starter/Reasoning Gate Turbo.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 465,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_relinquished",
+    "name": "Relinquished Duelist",
+    "difficulty": 5,
+    "tier": 8,
+    "deck": "decks/starter/Relinquished.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 475,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_relinquished_burn",
+    "name": "Relinquished Burn Duelist",
+    "difficulty": 5,
+    "tier": 9,
+    "deck": "decks/starter/Relinquished Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 510,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_soul_control",
+    "name": "Soul Control Duelist",
+    "difficulty": 5,
+    "tier": 9,
+    "deck": "decks/starter/Soul Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 520,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_spirit_control",
+    "name": "Spirit Control Duelist",
+    "difficulty": 5,
+    "tier": 9,
+    "deck": "decks/starter/Spirit Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 530,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_stall_burn",
+    "name": "Stall Burn Duelist",
+    "difficulty": 5,
+    "tier": 9,
+    "deck": "decks/starter/Stall Burn.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 510,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_stein_gate_turbo",
+    "name": "Stein Gate Turbo Duelist",
+    "difficulty": 5,
+    "tier": 9,
+    "deck": "decks/starter/Stein Gate Turbo.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 520,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_stein_horus",
+    "name": "Stein Horus Duelist",
+    "difficulty": 5,
+    "tier": 9,
+    "deck": "decks/starter/Stein Horus.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 530,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_stein_monarch",
+    "name": "Stein Monarch Duelist",
+    "difficulty": 5,
+    "tier": 9,
+    "deck": "decks/starter/Stein Monarch.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 510,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_stein_otk",
+    "name": "Stein OTK Duelist",
+    "difficulty": 5,
+    "tier": 9,
+    "deck": "decks/starter/Stein OTK.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 520,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_tiger_stun",
+    "name": "Tiger Stun Duelist",
+    "difficulty": 5,
+    "tier": 10,
+    "deck": "decks/starter/Tiger Stun.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 585,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_tomato_control",
+    "name": "Tomato Control Duelist",
+    "difficulty": 5,
+    "tier": 10,
+    "deck": "decks/starter/Tomato Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 565,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_tomato_monarch",
+    "name": "Tomato Monarch Duelist",
+    "difficulty": 5,
+    "tier": 10,
+    "deck": "decks/starter/Tomato Monarch.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 575,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_warrior",
+    "name": "Warrior Duelist",
+    "difficulty": 5,
+    "tier": 10,
+    "deck": "decks/starter/Warrior.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 585,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_warrior_control",
+    "name": "Warrior Control Duelist",
+    "difficulty": 5,
+    "tier": 10,
+    "deck": "decks/starter/Warrior Control.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 565,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_zombie",
+    "name": "Zombie Duelist",
+    "difficulty": 5,
+    "tier": 10,
+    "deck": "decks/starter/Zombie.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 575,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_zombie_turbo",
+    "name": "Zombie Turbo Duelist",
+    "difficulty": 5,
+    "tier": 10,
+    "deck": "decks/starter/Zombie Turbo.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 585,
+      "pack": "vault-of-the-pharaoh"
+    }
+  },
+  {
+    "id": "format_library_zorc_turbo",
+    "name": "Zorc Turbo Duelist",
+    "difficulty": 5,
+    "tier": 10,
+    "deck": "decks/starter/Zorc Turbo.ydk",
+    "agent": "heuristic-goat",
+    "rewards": {
+      "credits": 565,
+      "pack": "vault-of-the-pharaoh"
+    }
   }
 ]
