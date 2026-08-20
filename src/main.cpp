@@ -833,33 +833,47 @@ static void track_monster_stats(OCG_Duel duel, BoardState& board) {
   }
  }
 }
+// `human_player` here is the RAW OCG seat (0 or 1) the human actually
+// occupies this duel — not necessarily 0, now that main() coin-flips which
+// loaded deck lands on which seat (see the flip's own comment there). Every
+// two-wide field below is written through `out_index`, so the *file* always
+// presents the human's own side at index 0 and the opponent's at index 1
+// regardless of which raw seat either of them actually landed on — the
+// client's whole rendering model assumes "index 0 is always me," and this
+// is the one place that assumption gets made true again after the flip;
+// nothing else (BoardState, track_board_message, the AI's own observation
+// pipeline) needs to know the flip happened at all.
 static void write_board_state(const fs::path& directory, const BoardState& board, int human_player) {
  const auto temporary=directory/"state.tmp", output=directory/"state.txt"; std::ofstream out(temporary,std::ios::trunc);
- out << "lp=" << std::max(0, board.life[0]) << ',' << std::max(0, board.life[1]) << "\nhand=" << board.hand[0] << ',' << board.hand[1] << '\n';
- out << "deck=" << board.deck_count[0] << ',' << board.deck_count[1] << '\n';
- out << "grave=" << board.grave_count[0] << ',' << board.grave_count[1] << '\n';
- out << "extra=" << board.extra_count[0] << ',' << board.extra_count[1] << '\n';
- out << "banished=" << board.banished_count[0] << ',' << board.banished_count[1] << '\n';
- out << "turn=" << int(board.turn_player) << ',' << board.turn_number << ',' << board.phase << '\n';
+ // A duel with no human seat at all (CPU vs CPU) has nothing to reorient
+ // around — write raw seat order, same as always.
+ const auto out_index=[&](uint8_t raw_seat) -> uint8_t { return (human_player>=0 && raw_seat==static_cast<uint8_t>(human_player)) ? 0u : 1u; };
+ const uint8_t me = human_player>=0 ? static_cast<uint8_t>(human_player) : 0u, opp = 1u-me;
+ out << "lp=" << std::max(0, board.life[me]) << ',' << std::max(0, board.life[opp]) << "\nhand=" << board.hand[me] << ',' << board.hand[opp] << '\n';
+ out << "deck=" << board.deck_count[me] << ',' << board.deck_count[opp] << '\n';
+ out << "grave=" << board.grave_count[me] << ',' << board.grave_count[opp] << '\n';
+ out << "extra=" << board.extra_count[me] << ',' << board.extra_count[opp] << '\n';
+ out << "banished=" << board.banished_count[me] << ',' << board.banished_count[opp] << '\n';
+ out << "turn=" << int(out_index(board.turn_player)) << ',' << board.turn_number << ',' << board.phase << '\n';
  for(uint8_t player=0;player<2;++player) for(uint8_t sequence=0;sequence<5;++sequence) if(const auto& card=board.monsters[player][sequence]; card.code) {
-  const bool hidden=(player==1 && (card.position & POS_FACEDOWN));
+  const bool hidden=(player!=me && (card.position & POS_FACEDOWN));
   const auto visible_code=hidden ? 0u : card.code;
   // Current ATK/DEF (possibly boosted/reduced by an equip/continuous
   // effect) — masked the same as the code itself for a hidden card, so a
   // face-down monster's stats are never leaked through this either.
   const auto visible_attack=hidden ? -1 : card.attack;
   const auto visible_defense=hidden ? -1 : card.defense;
-  out << "monster=" << int(player) << ',' << int(sequence) << ',' << visible_code << ',' << int(card.position) << ',' << visible_attack << ',' << visible_defense << '\n';
+  out << "monster=" << int(out_index(player)) << ',' << int(sequence) << ',' << visible_code << ',' << int(card.position) << ',' << visible_attack << ',' << visible_defense << '\n';
  }
  for(uint8_t player=0;player<2;++player) for(uint8_t sequence=0;sequence<6;++sequence) if(const auto& card=board.spells[player][sequence]; card.code) {
-  const auto visible_code=(player==1 && (card.position & POS_FACEDOWN)) ? 0u : card.code;
-  out << "spell=" << int(player) << ',' << int(sequence) << ',' << visible_code << ',' << int(card.position) << '\n';
+  const auto visible_code=(player!=me && (card.position & POS_FACEDOWN)) ? 0u : card.code;
+  out << "spell=" << int(out_index(player)) << ',' << int(sequence) << ',' << visible_code << ',' << int(card.position) << '\n';
  }
  // Only the human player's own hand identities are ever written: the opponent's
  // hand must stay hidden information and is rendered client-side as card backs.
  if(human_player==0 || human_player==1) {
-  const auto& cards=board.hand_cards[human_player];
-  out << "handcards=" << human_player;
+  const auto& cards=board.hand_cards[me];
+  out << "handcards=0";
   for(const auto code : cards) out << ',' << code;
   out << '\n';
  }
@@ -867,8 +881,8 @@ static void write_board_state(const fs::path& directory, const BoardState& board
  // ever written — the opponent's stays unlisted (their own extra deck count
  // is still visible via extra= above, same as it always was).
  if(human_player==0 || human_player==1) {
-  const auto& cards=board.extra_cards[human_player];
-  out << "extracards=" << human_player;
+  const auto& cards=board.extra_cards[me];
+  out << "extracards=0";
   for(const auto code : cards) out << ',' << code;
   out << '\n';
  }
@@ -876,17 +890,17 @@ static void write_board_state(const fs::path& directory, const BoardState& board
  // unmasked, unlike hand. One line per player (player index first field),
  // same shape as handcards= above.
  for(uint8_t player=0;player<2;++player) {
-  out << "gravecards=" << int(player);
+  out << "gravecards=" << int(out_index(player));
   for(const auto code : board.grave_cards[player]) out << ',' << code;
   out << '\n';
  }
  // Banished can be face-down for a handful of effects — masked the same way
  // (and for the same reason) as a face-down monster/spell above: hidden
- // when it's the opponent's (player==1) and face-down, visible otherwise.
+ // when it's the opponent's and face-down, visible otherwise.
  for(uint8_t player=0;player<2;++player) {
-  out << "banishedcards=" << int(player);
+  out << "banishedcards=" << int(out_index(player));
   for(const auto& card : board.banished_cards[player]) {
-   const bool hidden=(player==1 && (card.position & POS_FACEDOWN));
+   const bool hidden=(player!=me && (card.position & POS_FACEDOWN));
    out << ',' << (hidden ? 0u : card.code);
   }
   out << '\n';
@@ -933,6 +947,16 @@ int main(int argc,char** argv) try {
  // .ydk lists them last and the deck's "top" is whatever gets registered
  // last), regardless of --seed.
  std::mt19937_64 shuffle_rng(seed);
+ // A real 50/50 coin flip for who goes first. ygopro-core itself has no
+ // such concept — field::process(Processors::Startup&) (processor.cpp)
+ // unconditionally hardcodes raw seat 0 as whoever takes the very first
+ // turn, full stop. The only lever available is which loaded deck actually
+ // gets put on that seat (see seat_of_a/seat_of_b below), so "who goes
+ // first" is decided right here, before either deck is even loaded into
+ // the duel. Drawn from the same seeded RNG as the deck shuffles below (and
+ // before them) so the whole duel setup — shuffle included — stays fully
+ // reproducible for a given --seed.
+ const bool swap_seats = std::uniform_int_distribution<int>(0, 1)(shuffle_rng) != 0;
  std::shuffle(a.main.begin(), a.main.end(), shuffle_rng);
  std::shuffle(b.main.begin(), b.main.end(), shuffle_rng);
  OCG_DuelOptions options{}; options.seed[0]=seed; options.seed[1]=seed^0x9e3779b97f4a7c15ULL; options.seed[2]=seed+1; options.seed[3]=seed+2;
@@ -945,18 +969,34 @@ int main(int argc,char** argv) try {
  // that has no script and so never surfaced this — every Effect Monster,
  // Spell, and Trap was silently failing to register its effect at all.
  for(const char* script : {"constant.lua","utility.lua"}) if(!script_reader(&ctx,duel,script)) throw std::runtime_error(std::string("failed to load ")+script);
+ // Which raw OCG seat each loaded deck actually lands on — normally a=seat 0,
+ // b=seat 1 (matching argv[2]/argv[3] order), swapped when the coin flip
+ // above came up tails. Every raw-seat comparison from here on (routing a
+ // decision to the human file-IPC path vs a CPU agent, which deck an agent's
+ // executor table is built from, RandomAgent's own player==human_player_
+ // checks) needs to go through this, not argument order, since that's the
+ // only thing the flip actually changes.
+ const uint8_t seat_of_a = swap_seats ? 1 : 0, seat_of_b = 1-seat_of_a;
  auto add=[&](const Deck& deck,uint8_t player){
   for(uint32_t i=0;i<deck.main.size();++i) { OCG_NewCardInfo info{}; info.team=player; info.con=player; info.code=deck.main[i]; info.loc=LOCATION_DECK; info.seq=2; info.pos=POS_FACEDOWN_DEFENSE; OCG_DuelNewCard(duel,&info); }
   for(uint32_t i=0;i<deck.extra.size();++i) { OCG_NewCardInfo info{}; info.team=player; info.con=player; info.code=deck.extra[i]; info.loc=LOCATION_EXTRA; info.seq=2; info.pos=POS_FACEDOWN_DEFENSE; OCG_DuelNewCard(duel,&info); }
- }; add(a,0); add(b,1);
+ }; add(a,seat_of_a); add(b,seat_of_b);
  std::cout << "Loaded decks: Player 1=" << OCG_DuelQueryCount(duel,0,LOCATION_DECK) << "+" << OCG_DuelQueryCount(duel,0,LOCATION_EXTRA)
            << " extra, Player 2=" << OCG_DuelQueryCount(duel,1,LOCATION_DECK) << "+" << OCG_DuelQueryCount(duel,1,LOCATION_EXTRA) << " extra\n";
- OCG_StartDuel(duel); RandomAgent agent(human_player, decision_directory); BoardState board; int turns=0;
+ OCG_StartDuel(duel);
+ // human_player (from --human-player) is expressed in "which .ydk argument"
+ // terms (0 = argv[2]/deck a, 1 = argv[3]/deck b); human_seat is the actual
+ // raw OCG seat that deck ended up on after the flip — everything past this
+ // point that needs to know "is this raw seat the human's" (RandomAgent,
+ // the cpu_agents loop below, the decision-routing check in the main loop,
+ // write_board_state) uses this, not human_player directly.
+ const int human_seat = human_player<0 ? human_player : static_cast<int>(human_player==0 ? seat_of_a : seat_of_b);
+ RandomAgent agent(human_seat, decision_directory); BoardState board; int turns=0;
  // Extra deck's starting contents never arrive via a message MSG_MOVE-style
  // tracking would see (OCG_DuelNewCard above just silently stacks it before
  // OCG_StartDuel even runs) — seeded directly from the same `a`/`b` Deck
  // structs used to build the duel itself. See BoardState::extra_cards.
- board.extra_cards[0]=a.extra; board.extra_cards[1]=b.extra;
+ board.extra_cards[seat_of_a]=a.extra; board.extra_cards[seat_of_b]=b.extra;
  // One goat::ai::DuelAgent per non-human seat — the human seat (if any)
  // keeps using the legacy `agent` menu/file-IPC path above untouched. Both
  // seats get their own agent for CPU vs CPU; --ai-seed (default: --seed)
@@ -964,14 +1004,18 @@ int main(int argc,char** argv) try {
  // while staying fully deterministic for a given --seed/--ai-seed pair.
  std::array<std::unique_ptr<goat::ai::DuelAgent>,2> cpu_agents;
  for(uint8_t seat=0; seat<2; ++seat) {
-  if(static_cast<int>(seat)==human_player) continue;
-  if(agent_name[seat]=="random") cpu_agents[seat]=std::make_unique<goat::ai::RandomAgent>(ctx.database);
+  if(static_cast<int>(seat)==human_seat) continue;
+  // agent_name/executor selection are keyed by argument order (--agent1/
+  // --agent2, deck a/b), same as human_player above — translate this raw
+  // seat back to that before looking either up.
+  const uint8_t arg_index = (seat==seat_of_a) ? 0 : 1;
+  if(agent_name[arg_index]=="random") cpu_agents[seat]=std::make_unique<goat::ai::RandomAgent>(ctx.database);
   else {
    // Picks a deck-specific executor table (Chaos Control, Gearfried, Burn)
    // when this seat's own deck matches one of those archetypes' signature
    // cards, falling back to the generic table otherwise — see
    // src/ai/executors/DeckArchetype.cpp.
-   auto executors = goat::ai::build_executors_for_deck((seat==0 ? a : b).main);
+   auto executors = goat::ai::build_executors_for_deck((seat==seat_of_a ? a : b).main);
    cpu_agents[seat]=std::make_unique<goat::ai::GoatAgent>(ctx.database, std::move(executors), difficulty, ai_seed.value_or(seed)+seat);
   }
  }
@@ -984,7 +1028,7 @@ int main(int argc,char** argv) try {
   board.grave_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_GRAVE); board.grave_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_GRAVE);
   board.extra_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_EXTRA); board.extra_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_EXTRA);
   board.banished_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_REMOVED); board.banished_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_REMOVED);
-  if(decision_directory) { track_monster_stats(duel,board); write_board_state(*decision_directory,board,human_player); }
+  if(decision_directory) { track_monster_stats(duel,board); write_board_state(*decision_directory,board,human_seat); }
   if(won) { if(g_result_file) { std::ofstream out(*g_result_file, std::ios::trunc); out << "winner=" << winner << "\nreason=" << reason << '\n'; } OCG_DestroyDuel(duel); return 0; }
   if(status==OCG_DUEL_STATUS_END) { OCG_DestroyDuel(duel); return 0; }
   if(status==OCG_DUEL_STATUS_AWAITING) { p=raw; while(p<end){auto n=read<uint32_t>(p,end); if((*p>=MSG_SELECT_BATTLECMD && *p<=MSG_SELECT_UNSELECT_CARD) || (*p>=MSG_ANNOUNCE_RACE && *p<=MSG_ANNOUNCE_NUMBER)) {
@@ -999,7 +1043,7 @@ int main(int argc,char** argv) try {
      // is deliberately left unpopulated for the human's own seat.
      const bool is_counter = kind==MSG_SELECT_COUNTER;
      const uint8_t decision_player = is_counter ? 0 : (n>1 ? p[1] : 0);
-     const bool is_human_decision = is_counter || (human_player>=0 && decision_player==static_cast<uint8_t>(human_player));
+     const bool is_human_decision = is_counter || (human_seat>=0 && decision_player==static_cast<uint8_t>(human_seat));
      if(is_human_decision) {
       const uint32_t chainContext=board.chain_stack.empty()?0u:board.chain_stack.back();
       auto answer=agent.choose(p,n,chainContext); OCG_DuelSetResponse(duel,answer.data(),answer.size());
