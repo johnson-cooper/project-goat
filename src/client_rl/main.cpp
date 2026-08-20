@@ -3482,38 +3482,53 @@ void paint_duel(AppState& state, const Rect& client, const UiScale& scale, Vecto
 
     for (int i = 0; i < 5; ++i) {
         const size_t si = static_cast<size_t>(i);
-        // Placement targets only ever make sense on an empty zone and attack
-        // targets only on an occupied one; enforcing that here means a stale
-        // or unexpected action_layout can never glow the wrong zone kind.
-        const bool zoneOccupied = state.monsters[0][si].occupied;
-        const bool legalMonster = (state.action_layout.all_zone_placement && !state.action_layout.zone_placement_is_spell)
-            ? (!zoneOccupied && state.action_layout.zone_to_action[si] >= 0)
-            : (!state.action_layout.all_zone_placement && zoneOccupied && (state.action_layout.attack_zone_to_action.count(i) > 0 || state.action_layout.monster_board_actions.count(i) > 0));
-        const bool selectedMonster = state.selected_monster_zone == i;
-        const bool spellZoneOccupied = state.spells[0][si].occupied;
-        const bool legalSpell = (state.action_layout.all_zone_placement && state.action_layout.zone_placement_is_spell)
-            ? (!spellZoneOccupied && state.action_layout.zone_to_action[si] >= 0)
-            : (!state.action_layout.all_zone_placement && spellZoneOccupied && state.action_layout.spell_board_actions.count(i) > 0);
-        const bool selectedSpell = state.selected_spell_zone == i;
         const int candPlayerMonster = find_multi_select_candidate(state, 0, LOCATION_MZONE, static_cast<uint32_t>(i));
         const int candPlayerSpell = find_multi_select_candidate(state, 0, LOCATION_SZONE, static_cast<uint32_t>(i));
         const int candOpponentMonster = find_multi_select_candidate(state, 1, LOCATION_MZONE, static_cast<uint32_t>(i));
         const int candOpponentSpell = find_multi_select_candidate(state, 1, LOCATION_SZONE, static_cast<uint32_t>(i));
+        // Placement targets only ever make sense on an empty zone and attack
+        // targets only on an occupied one; enforcing that here means a stale
+        // or unexpected action_layout can never glow the wrong zone kind.
+        // action_layout itself is deliberately left blank while a "#SELECT"
+        // prompt is active (see paint_duel's own comment on why — it's built
+        // from verb-prefixed legal_action text, which multi-select candidates
+        // aren't), so during multi-select "legal to highlight" instead means
+        // "is a candidate for this prompt" — the only shape of legality that
+        // actually applies then, for either side of the field. Without this,
+        // an opponent zone that's a genuine, clickable target for e.g.
+        // Mystical Space Typhoon or an attack never got the same gold
+        // "legal" outline every other selectable zone in this client gets,
+        // which reads as "nothing here is selectable" even though clicking
+        // it does work.
+        const bool zoneOccupied = state.monsters[0][si].occupied;
+        const bool legalMonster = state.multi_select_active ? candPlayerMonster >= 0
+            : (state.action_layout.all_zone_placement && !state.action_layout.zone_placement_is_spell)
+                ? (!zoneOccupied && state.action_layout.zone_to_action[si] >= 0)
+                : (!state.action_layout.all_zone_placement && zoneOccupied && (state.action_layout.attack_zone_to_action.count(i) > 0 || state.action_layout.monster_board_actions.count(i) > 0));
+        const bool selectedMonster = state.selected_monster_zone == i;
+        const bool spellZoneOccupied = state.spells[0][si].occupied;
+        const bool legalSpell = state.multi_select_active ? candPlayerSpell >= 0
+            : (state.action_layout.all_zone_placement && state.action_layout.zone_placement_is_spell)
+                ? (!spellZoneOccupied && state.action_layout.zone_to_action[si] >= 0)
+                : (!state.action_layout.all_zone_placement && spellZoneOccupied && state.action_layout.spell_board_actions.count(i) > 0);
+        const bool selectedSpell = state.selected_spell_zone == i;
+        const bool legalOpponentMonster = state.multi_select_active && candOpponentMonster >= 0;
+        const bool legalOpponentSpell = state.multi_select_active && candOpponentSpell >= 0;
         const bool toggledPlayerMonster = candPlayerMonster >= 0 && state.multi_select_toggled[static_cast<size_t>(candPlayerMonster)];
         const bool toggledPlayerSpell = candPlayerSpell >= 0 && state.multi_select_toggled[static_cast<size_t>(candPlayerSpell)];
         const bool toggledOpponentMonster = candOpponentMonster >= 0 && state.multi_select_toggled[static_cast<size_t>(candOpponentMonster)];
         const bool toggledOpponentSpell = candOpponentSpell >= 0 && state.multi_select_toggled[static_cast<size_t>(candOpponentSpell)];
         draw_card_slot(state, L.player_monsters[si], state.monsters[0][si], true, "MONSTER", scale, hover.player_zone == i || selectedMonster, legalMonster, toggledPlayerMonster);
         draw_card_slot(state, L.player_spells[si], state.spells[0][si], false, "SPELL/TRAP", scale, selectedSpell, legalSpell, toggledPlayerSpell);
-        draw_card_slot(state, L.opponent_monsters[si], state.monsters[1][si], true, "MONSTER", scale, false, false, toggledOpponentMonster);
-        draw_card_slot(state, L.opponent_spells[si], state.spells[1][si], false, "SPELL/TRAP", scale, false, false, toggledOpponentSpell);
+        draw_card_slot(state, L.opponent_monsters[si], state.monsters[1][si], true, "MONSTER", scale, false, legalOpponentMonster, toggledOpponentMonster);
+        draw_card_slot(state, L.opponent_spells[si], state.spells[1][si], false, "SPELL/TRAP", scale, false, legalOpponentSpell, toggledOpponentSpell);
     }
     const int candPlayerField = find_multi_select_candidate(state, 0, LOCATION_SZONE, 5);
     const int candOpponentField = find_multi_select_candidate(state, 1, LOCATION_SZONE, 5);
     draw_card_slot(state, L.player_spells[5], state.spells[0][5], false, "FIELD", scale, state.selected_spell_zone == 5,
-                   state.spells[0][5].occupied && state.action_layout.spell_board_actions.count(5) > 0,
+                   state.multi_select_active ? candPlayerField >= 0 : (state.spells[0][5].occupied && state.action_layout.spell_board_actions.count(5) > 0),
                    candPlayerField >= 0 && state.multi_select_toggled[static_cast<size_t>(candPlayerField)]);
-    draw_card_slot(state, L.opponent_spells[5], state.spells[1][5], false, "FIELD", scale, false, false,
+    draw_card_slot(state, L.opponent_spells[5], state.spells[1][5], false, "FIELD", scale, false, state.multi_select_active && candOpponentField >= 0,
                    candOpponentField >= 0 && state.multi_select_toggled[static_cast<size_t>(candOpponentField)]);
     draw_pile_zone(state.font, L.player_deck, "DECK", state.deck_count[0], scale);
     draw_pile_zone(state.font, L.player_extra, "EXTRA", state.extra_count[0], scale, L.player_extra.contains(static_cast<int>(mouse.x), static_cast<int>(mouse.y)));
