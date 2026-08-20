@@ -148,7 +148,24 @@ jobs:
                    "$pkg/external/card_images" "$pkg/external/packart" "$pkg/external/extra" "$pkg/external/sound"
           cp -r data/. "$pkg/data/"
           cp -r decks/. "$pkg/decks/"
-          cp -r external/CardScripts/. "$pkg/external/CardScripts/"
+          # external/CardScripts on disk at this point is the *full* upstream
+          # checkout (~22.7k files, fetched fresh by update-dependencies.ps1 —
+          # see its own comment on why the trimmed subset alone isn't enough
+          # for correctness during the build itself: any GOAT-legal card
+          # whose script isn't in the trimmed set needs the full clone to
+          # resolve at all). Shipping all of that to players would bloat
+          # every release by more than an order of magnitude for cards that
+          # can never legally appear in a GOAT-format duel. What actually
+          # ships is only the subset this repo's own git history tracks —
+          # every GOAT-legal card's script plus the shared root libraries
+          # (utility.lua, the proc_*.lua files, ...) every script depends on,
+          # the same curated set `git add -f`'d into external/CardScripts/
+          # (see .gitignore's own notes there) — not whatever the build
+          # environment happened to fetch.
+          git ls-files external/CardScripts | while IFS= read -r f; do
+            mkdir -p "$pkg/$(dirname "$f")"
+            cp "$f" "$pkg/$f"
+          done
           cp external/BabelCDB/cards.cdb external/BabelCDB/goat-entries.cdb "$pkg/external/BabelCDB/"
           cp external/LFLists/GOAT.lflist.conf "$pkg/external/LFLists/"
           cp -r external/card_images/. "$pkg/external/card_images/"
