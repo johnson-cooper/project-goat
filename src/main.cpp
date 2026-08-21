@@ -708,6 +708,22 @@ static void track_board_message(const uint8_t* data, size_t length, BoardState& 
   for(uint32_t i=0;i<count;i++) { const auto code=read<uint32_t>(p,end); read<uint32_t>(p,end); if(player<2) board.hand_cards[player].push_back(code); }
   return;
  }
+ if(kind == MSG_SHUFFLE_HAND) {
+  // Effects like Graceful Charity (draw 3, then Duel.ShuffleHand before the
+  // discard prompt) reorder the engine's hand in place so the discard can't
+  // be inferred from draw order. The engine reports the resulting order in
+  // full here; without applying it, this mirror keeps the pre-shuffle slot
+  // order while MSG_SELECT_CARD's candidate sequences are already the new
+  // (post-shuffle) ones, so a click on the hand grid resolves to whatever
+  // card the engine now has at that sequence instead of the one on screen —
+  // the wrong card gets discarded, and the *actual* discarded code (correct)
+  // then shows up in the graveyard looking like a mismatch.
+  const auto player=read<uint8_t>(p,end); const auto count=read<uint32_t>(p,end);
+  std::vector<uint32_t> shuffled; shuffled.reserve(count);
+  for(uint32_t i=0;i<count;i++) shuffled.push_back(read<uint32_t>(p,end));
+  if(player<2) board.hand_cards[player]=std::move(shuffled);
+  return;
+ }
  if(kind == MSG_MOVE) {
   const auto code=read<uint32_t>(p,end); const auto previous=read_location(p,end); const auto current=read_location(p,end);
   if(previous.player<2 && previous.location==LOCATION_MZONE && previous.sequence<5) board.monsters[previous.player][previous.sequence]={};
