@@ -1067,7 +1067,21 @@ int main(int argc,char** argv) try {
   board.extra_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_EXTRA); board.extra_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_EXTRA);
   board.banished_count[0]=OCG_DuelQueryCount(duel,0,LOCATION_REMOVED); board.banished_count[1]=OCG_DuelQueryCount(duel,1,LOCATION_REMOVED);
   if(decision_directory) { track_monster_stats(duel,board); write_board_state(*decision_directory,board,human_seat); }
-  if(won) { if(g_result_file) { std::ofstream out(*g_result_file, std::ios::trunc); out << "winner=" << winner << "\nreason=" << reason << '\n'; } OCG_DestroyDuel(duel); return 0; }
+  if(won) {
+   if(g_result_file) {
+    // winner is the RAW OCG seat MSG_WIN reported (0/1, or PLAYER_NONE for a
+    // draw) — coin-flipped by swap_seats above, so it's the human's seat only
+    // about half the time. client_rl reads this file assuming "winner=0"
+    // means the human won, so translate through human_seat (the same
+    // raw-seat-of-the-human this file already uses at write_board_state)
+    // before writing, or every duel where the human landed on raw seat 1
+    // reports a genuine win as a loss: no reward, no NPC counter increment.
+    int reported_winner=winner;
+    if(human_seat>=0 && winner!=PLAYER_NONE) reported_winner = (winner==human_seat) ? 0 : 1;
+    std::ofstream out(*g_result_file, std::ios::trunc); out << "winner=" << reported_winner << "\nreason=" << reason << '\n';
+   }
+   OCG_DestroyDuel(duel); return 0;
+  }
   if(status==OCG_DUEL_STATUS_END) { OCG_DestroyDuel(duel); return 0; }
   if(status==OCG_DUEL_STATUS_AWAITING) { p=raw; while(p<end){auto n=read<uint32_t>(p,end); if((*p>=MSG_SELECT_BATTLECMD && *p<=MSG_SELECT_UNSELECT_CARD) || (*p>=MSG_ANNOUNCE_RACE && *p<=MSG_ANNOUNCE_NUMBER)) {
     try {
