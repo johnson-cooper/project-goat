@@ -713,7 +713,16 @@ static void track_board_message(const uint8_t* data, size_t length, BoardState& 
   if(previous.player<2 && previous.location==LOCATION_MZONE && previous.sequence<5) board.monsters[previous.player][previous.sequence]={};
   if(previous.player<2 && previous.location==LOCATION_SZONE && previous.sequence<6) board.spells[previous.player][previous.sequence]={};
   if(previous.player<2 && previous.location==LOCATION_HAND) {
-   auto& cards=board.hand_cards[previous.player]; if(const auto it=std::find(cards.begin(),cards.end(),code); it!=cards.end()) cards.erase(it);
+   // Erase by previous.sequence, not by first-matching code: the engine
+   // itself removes the exact physical card at that hand slot (see
+   // ygopro-core's field.cpp LOCATION_HAND case), so with 2+ copies of the
+   // same code in hand, an erase-by-code here could delete a different copy
+   // than the one that actually left — silently desyncing this mirror's
+   // slot order from the engine's, which then made multi-select prompts
+   // (e.g. Graceful Charity's discard) resolve the wrong physical card.
+   auto& cards=board.hand_cards[previous.player];
+   if(previous.sequence<cards.size()) cards.erase(cards.begin()+previous.sequence);
+   else if(const auto it=std::find(cards.begin(),cards.end(),code); it!=cards.end()) cards.erase(it);
    if(board.hand[previous.player]) --board.hand[previous.player];
   }
   // Grave/banished-pile card lists (see BoardState's own field comments) —
